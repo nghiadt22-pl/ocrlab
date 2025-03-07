@@ -1,4 +1,3 @@
-
 # Document Intelligence Application
 
 A modern web application for extracting and indexing content from PDF documents using Azure AI Document Intelligence.
@@ -12,6 +11,7 @@ A modern web application for extracting and indexing content from PDF documents 
 - **Search Indexing**: Indexes extracted content in Azure AI Search for future retrieval
 - **User-Friendly Interface**: Modern, responsive UI built with React and Tailwind CSS
 - **Resilient Design**: Fallback mechanisms for when cloud services are unavailable
+- **CI/CD Pipeline**: Automated deployment using GitHub Actions
 
 ## Getting Started
 
@@ -41,6 +41,7 @@ For more detailed information, check out these documentation files:
 - [API Integration Guide](API_INTEGRATION_GUIDE.md)
 - [Developer Guide](DEVELOPER_GUIDE.md)
 - [Contribution Guide](CONTRIBUTION_GUIDE.md)
+- [Deployment Guide](.github/workflows/README.md)
 
 ## Usage
 
@@ -61,8 +62,21 @@ For more detailed information, check out these documentation files:
 ## Technologies Used
 
 - **Frontend**: React, TypeScript, Tailwind CSS, shadcn/ui
+- **Backend**: Azure Functions, Python
 - **Cloud Services**: Azure Blob Storage, Azure AI Document Intelligence, Azure AI Search
 - **Authentication**: Clerk
+- **CI/CD**: GitHub Actions
+
+## Deployment
+
+### Backend Deployment
+
+The Azure Functions backend is automatically deployed using GitHub Actions. Two workflow options are available:
+
+1. **Azure Functions GitHub Action**: Uses the official Azure Functions GitHub Action
+2. **Azure Functions CLI**: Uses the Azure Functions Core Tools CLI directly
+
+For setup instructions and more details, see the [Deployment Guide](.github/workflows/README.md).
 
 ## Contributing
 
