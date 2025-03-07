@@ -29,3 +29,6 @@ dist-ssr
 .env.production
 
 function_app/local.settings.json
+
+# windsurf rules
+.windsurfrules

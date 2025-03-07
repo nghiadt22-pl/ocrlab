@@ -129,16 +129,74 @@ def upload_file(req: func.HttpRequest) -> func.HttpResponse:
         if not folder_id:
             return create_error_response(400, "Folder ID is required in x-folder-id header")
         
-        # TODO: Implement file upload logic
-        # For now, return mock data
+        # Get the file from the request
+        files = req.files.get('file')
+        if not files:
+            return create_error_response(400, "No file found in request")
+        
+        # Get the first file if multiple were uploaded
+        file = files[0] if isinstance(files, list) else files
+        
+        # Get file properties
+        filename = file.filename
+        content_type = file.content_type
+        file_contents = file.read()
+        file_size = len(file_contents)
+        
+        if file_size <= 0:
+            return create_error_response(400, "Empty file uploaded")
+        
+        # Get blob storage connection string from environment variable
+        connection_string = os.environ.get('AzureWebJobsStorage')
+        if not connection_string:
+            logger.error("Missing storage connection string")
+            return create_error_response(500, "Storage configuration error")
+        
+        # Create a unique blob name using user_id, folder_id and timestamp
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        blob_name = f"{user_id}/{folder_id}/{timestamp}_{filename}"
+        
+        # Upload to blob storage
+        from azure.storage.blob import BlobServiceClient, ContentSettings
+        
+        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+        container_name = os.environ.get('STORAGE_CONTAINER_NAME', 'ocrlab-files')
+        
+        # Create container if it doesn't exist
+        try:
+            container_client = blob_service_client.get_container_client(container_name)
+            if not container_client.exists():
+                container_client.create_container()
+        except Exception as e:
+            logger.error(f"Error creating container: {str(e)}")
+            return create_error_response(500, f"Failed to create storage container: {str(e)}")
+        
+        # Upload the file
+        blob_client = blob_service_client.get_blob_client(
+            container=container_name, 
+            blob=blob_name
+        )
+        
+        content_settings = ContentSettings(content_type=content_type)
+        blob_client.upload_blob(
+            file_contents,
+            overwrite=True,
+            content_settings=content_settings
+        )
+        
+        # Get the blob URL
+        blob_url = blob_client.url
+        
+        # Save file metadata to database (TODO: implement database connection)
+        # For now, we'll just return the file information
         file_data = {
-            "id": 1,
-            "name": "example.pdf",
+            "id": 1,  # This would normally be assigned by the database
+            "name": filename,
             "folder_id": int(folder_id),
-            "blob_url": "https://storage.azure.com/container/example.pdf",
+            "blob_url": blob_url,
             "status": "uploaded",
-            "size_bytes": 1048576,
-            "content_type": "application/pdf",
+            "size_bytes": file_size,
+            "content_type": content_type,
             "created_at": datetime.datetime.now().isoformat(),
             "updated_at": datetime.datetime.now().isoformat()
         }
