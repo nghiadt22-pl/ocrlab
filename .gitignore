@@ -32,3 +32,5 @@ function_app/local.settings.json
 
 # windsurf rules
 .windsurfrules
+
+.history

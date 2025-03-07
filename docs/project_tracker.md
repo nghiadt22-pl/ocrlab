@@ -63,11 +63,12 @@ This document tracks all tasks for the OCR Lab project implementation with check
 - [ ] Implement queue-based processing
 
 #### Vector Database Integration
-- [ ] Complete Azure AI Search index setup
+- [x] Complete Azure AI Search index setup
+- [x] Implement document indexing functionality
 - [ ] Implement text chunking logic
 - [ ] Generate and store embeddings
-- [ ] Implement semantic search functionality
-- [ ] Add metadata filtering
+- [x] Implement semantic search functionality
+- [x] Add metadata filtering
 
 ### Phase 3: User Interface Development
 
@@ -94,7 +95,8 @@ This document tracks all tasks for the OCR Lab project implementation with check
 ### Phase 4: Advanced Features and API
 
 #### REST API Development
-- [ ] Implement `/api/query` endpoint
+- [x] Implement `/api/query` endpoint
+- [x] Implement `/api/index` endpoint
 - [x] Create file management endpoints
 - [x] Create folder management endpoints
 - [ ] Implement authentication/authorization

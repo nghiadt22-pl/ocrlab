@@ -11,6 +11,9 @@ const AZURE_FUNCTION_URL = import.meta.env.VITE_AZURE_FUNCTION_URL || 'https://t
  */
 export async function indexDocumentInSearch(document: ProcessedDocument, blobUrl: string): Promise<void> {
   try {
+    // Mock user ID (in a real app, this would come from auth)
+    const userId = 'test-user-1';
+    
     // Prepare the document for indexing
     const searchDocument = {
       id: document.id,
@@ -31,15 +34,20 @@ export async function indexDocumentInSearch(document: ProcessedDocument, blobUrl
     const response = await fetch(`${AZURE_FUNCTION_URL}/api/index`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'x-user-id': userId // Add user ID header
       },
       body: JSON.stringify(searchDocument)
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Failed to index document: ${errorText}`);
+      console.error('Indexing error response:', errorText);
+      throw new Error(`Failed to index document: ${response.status}`);
     }
+    
+    // Log success
+    console.log('Document successfully indexed in Azure AI Search');
   } catch (error) {
     console.error('Error indexing document:', error);
     toast.error('Failed to index document in search');
@@ -126,6 +134,9 @@ async function indexDocuments(documents: SearchDocument[]): Promise<boolean> {
  */
 export async function searchDocuments(searchRequest: SearchRequest): Promise<SearchResult[]> {
   try {
+    // Mock user ID (in a real app, this would come from auth)
+    const userId = 'test-user-1';
+    
     // Validate the request
     if (!searchRequest.query && !searchRequest.vector) {
       throw new Error('Either query or vector must be provided');
@@ -135,10 +146,11 @@ export async function searchDocuments(searchRequest: SearchRequest): Promise<Sea
       throw new Error('Vector must have 1536 dimensions');
     }
 
-    const response = await fetch(`${AZURE_FUNCTION_URL}/api/search`, {
+    const response = await fetch(`${AZURE_FUNCTION_URL}/api/query`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'x-user-id': userId // Add user ID header
       },
       body: JSON.stringify({
         ...searchRequest,
@@ -148,11 +160,12 @@ export async function searchDocuments(searchRequest: SearchRequest): Promise<Sea
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Search failed: ${errorText}`);
+      console.error('Search error response:', errorText);
+      throw new Error(`Search failed with status: ${response.status}`);
     }
 
     const result = await response.json();
-    return result.value;
+    return result.results || [];
   } catch (error) {
     console.error('Error searching documents:', error);
     toast.error('Failed to search documents');

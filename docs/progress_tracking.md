@@ -24,12 +24,14 @@
 
 ### Phase 2: Core Functionality
 - **Status**: In Progress
-- **Progress**: 40% complete
+- **Progress**: 50% complete
 - **Tasks Completed**:
   - Implement folder management endpoints (create, list, delete)
   - Implement file upload to Azure Blob Storage
   - Create file status tracking system
   - Implement file deletion (Blob Storage + database)
+  - Implement Azure AI Search indexing functionality
+  - Configure document search with text-based and metadata filtering
 - **Tasks Remaining**:
   - Set up Azure Document Intelligence client
   - Implement PDF text extraction

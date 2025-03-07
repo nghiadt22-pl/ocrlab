@@ -287,25 +287,95 @@ def search_query(req: func.HttpRequest) -> func.HttpResponse:
             return create_error_response(400, "Query is required")
         
         query = req_body.get('query')
-        n = req_body.get('n', 5)  # Default to 5 results
+        top = req_body.get('top', 5)  # Default to 5 results
         
-        # TODO: Implement search logic
-        # For now, return mock data
-        results = [
-            {
-                "text": "This is a sample text chunk that matches the query.",
-                "file_id": 1,
-                "file_name": "example.pdf",
-                "page_number": 1,
-                "score": 0.95
-            }
-        ]
+        # Connect to Azure Search Service
+        from azure.search.documents import SearchClient
+        from azure.core.credentials import AzureKeyCredential
         
-        return func.HttpResponse(
-            body=json.dumps({"results": results}),
-            status_code=200,
-            mimetype="application/json"
+        # Get Azure Search credentials from environment
+        endpoint = os.environ.get('AZURE_AISEARCH_ENDPOINT', 'https://testpl.search.windows.net/')
+        search_api_key = os.environ.get('AZURE_AISEARCH_KEY')
+        search_index_name = os.environ.get('AZURE_AISEARCH_INDEX', 'test-upload')
+        
+        if not search_api_key or search_api_key == 'default-key-for-development':
+            logger.warning("Using mock search service because API key not configured")
+            # Return mock data for testing
+            mock_results = [
+                {
+                    "id": "mock-doc-1",
+                    "text": "This is a sample document that matches your query: " + query,
+                    "score": 0.95,
+                    "filename": "sample.pdf",
+                    "blobUrl": "https://example.com/sample.pdf",
+                    "pageNumber": 1
+                }
+            ]
+            return func.HttpResponse(
+                body=json.dumps({
+                    "results": mock_results,
+                    "note": "Mock results - Azure Search API key not configured"
+                }),
+                status_code=200,
+                mimetype="application/json"
+            )
+        
+        # Create the search client
+        search_client = SearchClient(
+            endpoint=endpoint,
+            index_name=search_index_name,
+            credential=AzureKeyCredential(search_api_key)
         )
+                        
+        # Set up search options
+        # Filter by user_id from metadata for multi-tenancy security
+        select_fields = ["id", "content", "metadata"]
+        
+        # Perform search query
+        try:
+            # Regular search (not semantic) since semantic requires special configuration
+            results = search_client.search(
+                search_text=query,
+                select=select_fields,
+                top=top
+            )
+            
+            # Process and format the results
+            formatted_results = []
+            for result in results:
+                # Extract metadata if available
+                metadata = {}
+                if "metadata" in result and result["metadata"]:
+                    try:
+                        metadata = json.loads(result["metadata"])
+                    except json.JSONDecodeError:
+                        logger.warning(f"Failed to parse metadata JSON for document {result.get('id', '')}")
+                
+                # Skip documents not owned by this user (if user_id in metadata)
+                result_user_id = metadata.get("user_id")
+                if result_user_id and result_user_id != user_id:
+                    continue
+                    
+                # Format the result
+                formatted_result = {
+                    "id": result.get("id", ""),
+                    "text": result.get("content", ""),
+                    "score": result["@search.score"] if "@search.score" in result else 0,
+                    "filename": metadata.get("filename", ""),
+                    "blobUrl": metadata.get("blobUrl", ""),
+                    "pageNumber": metadata.get("pageNumber", 1)
+                }
+                
+                formatted_results.append(formatted_result)
+            
+            return func.HttpResponse(
+                body=json.dumps({"results": formatted_results}),
+                status_code=200,
+                mimetype="application/json"
+            )
+        except Exception as e:
+            logger.error(f"Error during search operation: {str(e)}")
+            return create_error_response(500, f"Error during search operation: {str(e)}")
     except Exception as e:
         logger.error(f"Error performing search: {str(e)}")
         return create_error_response(500, f"Failed to perform search: {str(e)}")
@@ -355,4 +425,106 @@ def process_ocr_queue(msg: func.QueueMessage) -> None:
         
         logger.info(f"OCR processing completed for job: {message_body}")
     except Exception as e:
-        logger.error(f"Error processing OCR job: {str(e)}") 
+        logger.error(f"Error processing OCR job: {str(e)}")
+
+# Document Indexing Functions
+@app.route(route="index", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+def index_document(req: func.HttpRequest) -> func.HttpResponse:
+    """Index document content in Azure AI Search."""
+    try:
+        # Get the request body
+        req_body = req.get_json()
+        if not req_body:
+            return create_error_response(400, "Request body is required")
+            
+        # Validate required fields
+        if 'id' not in req_body:
+            return create_error_response(400, "Document ID is required")
+        if 'content' not in req_body or not req_body['content']:
+            return create_error_response(400, "Document content is required")
+        
+        # Get user ID from headers for multi-tenancy
+        user_id = get_user_id(req)
+        if not user_id:
+            return create_error_response(400, "User ID is required in x-user-id header")
+        
+        # Connect to Azure Search Service
+        from azure.search.documents import SearchClient
+        from azure.core.credentials import AzureKeyCredential
+        
+        # Get Azure Search credentials from environment
+        endpoint = os.environ.get('AZURE_AISEARCH_ENDPOINT', 'https://testpl.search.windows.net/')
+        search_api_key = os.environ.get('AZURE_AISEARCH_KEY')
+        search_index_name = os.environ.get('AZURE_AISEARCH_INDEX', 'test-upload')
+        
+        if not search_api_key or search_api_key == 'default-key-for-development':
+            logger.warning("Using mock search service because API key not configured. Would index document with ID: " + req_body['id'])
+            # Return success for testing without actual search service
+            return func.HttpResponse(
+                body=json.dumps({
+                    "success": True, 
+                    "message": "Document indexed successfully (MOCK MODE)", 
+                    "note": "Azure Search API key not configured - document not actually indexed"
+                }),
+                status_code=200,
+                mimetype="application/json"
+            )
+        
+        # Create the search client
+        admin_client = SearchClient(
+            endpoint=endpoint,
+            index_name=search_index_name,
+            credential=AzureKeyCredential(search_api_key)
+        )
+        
+        # Prepare the document for indexing according to the index schema
+        # Schema: id (String), content (String), content_vector (SingleCollection), metadata (String)
+        
+        # Create a combined metadata object as a JSON string
+        metadata_dict = {}
+        
+        # Add basic metadata
+        if 'metadata' in req_body:
+            try:
+                if isinstance(req_body['metadata'], str):
+                    metadata_dict = json.loads(req_body['metadata'])
+                else:
+                    metadata_dict = req_body['metadata']
+            except json.JSONDecodeError:
+                logger.warning("Invalid metadata JSON, using empty metadata")
+        
+        # Add user ID to metadata for multi-tenancy tracking without schema changes
+        metadata_dict['user_id'] = user_id
+        
+        # Create the search document with only the fields in the schema
+        search_document = {
+            'id': req_body['id'],
+            'content': req_body['content'],
+            'metadata': json.dumps(metadata_dict)
+        }
+        
+        # Add content_vector if provided in the request
+        if 'content_vector' in req_body and isinstance(req_body['content_vector'], list):
+            search_document['content_vector'] = req_body['content_vector']
+        
+        # Index the document
+        try:
+            result = admin_client.upload_documents(documents=[search_document])
+            
+            # Check result
+            success = all(r.succeeded for r in result)
+            if not success:
+                logger.error(f"Error indexing document: {result[0].error_message}")
+                return create_error_response(500, f"Error indexing document: {result[0].error_message}")
+            
+            return func.HttpResponse(
+                body=json.dumps({"success": True, "message": "Document indexed successfully"}),
+                status_code=200,
+                mimetype="application/json"
+            )
+        except Exception as e:
+            logger.error(f"Error during document indexing: {str(e)}")
+            return create_error_response(500, f"Error during document indexing: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error indexing document: {str(e)}")
+        return create_error_response(500, f"Failed to index document: {str(e)}")
