@@ -1,20 +1,23 @@
 ---
-description: 
+description: General rules. Always refer to this first.
 globs: 
 alwaysApply: false
 ---
-Project Summary:
+Overview is [PRD.md](mdc:docs/PRD.md). Tech used: [tech_stack.md](mdc:docs/tech_stack.md)
 
-OCR Lab is a cloud-based micro-SaaS product designed to simplify data extraction from PDFs, including printed text, handwritten notes, tables, and images. Leveraging Azure Document Intelligence for high-accuracy OCR, it transforms unstructured documents into structured, searchable information stored securely in Azure AI Search (vector database) and Azure Database for PostgreSQL (metadata).
+**ALWAYS TEST TO CONFIRM IF THE TASK IS COMPLETED**
 
-Users can easily organize and upload documents through an intuitive Next.js web interface. The platform offers semantic search capabilities, enabling natural language queries and advanced retrieval-augmented generation (RAG) workflows.
+**DEPLOY BACKEND ON AZURE FUNCTIONS USING ~~~func azure functionapp publish testpl~~~ AND ALWAYS TEST USING testpl.azurewebsites.net**
+High-level overview of development:
+Check the task list. Then, complete a task. Then, test the task. Then, update related documents if test success.
+- If there's a bug, log bug to [bug_tracker.md](mdc:docs/bug_tracker.md). Then, understand the bug; search the web if necessary. Then, fix the bug.
 
-Technical Requirements:
-- **Azure Document Intelligence** for OCR
-- **Azure Functions** as serverless backend
-- **Azure Database for PostgreSQL**
-- **Azure AI Search** as vector DB
-- **Azure Blob Storage**
+- Check [project_tracker.md](mdc:docs/project_tracker.md) for task list.
+
+Update [project_tracker.md](mdc:docs/project_tracker.md) and [progress_tracking.md](mdc:docs/progress_tracking.md) after completing a task.
+
+Frontend guidelines = [frontend_guidelines.md](mdc:docs/frontend_guidelines.md)
+Backend structure = [backend_structure.md](mdc:docs/backend_structure.md)
 
 Documentation and Comments:
 
@@ -34,12 +37,7 @@ Printing and Logging:
 
 Dependencies:
 
-- Init all dependencies in the dependencies.py file.
 - Pass dependencies to classes when they are initialized.
-
-Configuration:
-
-- Write the configuration in the config.py file.
 
 Naming Conventions:
 
@@ -98,10 +96,10 @@ Async:
 
 Memory:
 
-- When you need to remember something, update the .cursormemory.md file.
-- Refer to the .cursormemory.md file to view the memory.
+- When you need to remember something, update the [memory.md](mdc:docs/memory.md) file.
+- Refer to the [memory.md](mdc:docs/memory.md) file to view the memory.
 - Update the memory with project specifications, requirements, flow of the code, and other relevant information.
-- Add instructions for development like how to add new GraphQL mutations and queries to the memory.
+- Add instructions for development like how to add new pages to the memory.
 
 Planning:
 
