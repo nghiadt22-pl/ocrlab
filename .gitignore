@@ -30,7 +30,9 @@ dist-ssr
 
 function_app/local.settings.json
 
-# windsurf rules
-.windsurfrules
+# Private individual user cursor rules
+.cursor/rules/_*.mdc
 
-.history
+# Documentation and templates
+xnotes/
+docs/
