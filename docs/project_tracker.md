@@ -1,10 +1,24 @@
-# OCR Lab Project Tracker - Todo List
+# OCR Lab Project Tracker
 
-This document tracks all tasks for the OCR Lab project implementation with checkboxes for progress tracking.
+This document tracks all tasks for the OCR Lab project implementation with checkboxes for progress tracking. For detailed story tracking, please refer to the `.ai/epic-1/story-1.story.md` file.
 
-## 📋 Detailed Todo List
+## 📋 Project Structure
 
-### Phase 1: Project Setup and Infrastructure
+The project follows the Agile workflow defined in the `@801-workflow-agile.mdc` rule. The project structure is as follows:
+
+```
+.ai/
+├── prd.md                 # Product Requirements Document (Approved)
+├── arch.md                # Architecture Decision Record (Approved)
+└── epic-1/               # Current Epic directory (OCR Lab Implementation)
+    └── story-1.story.md  # Project Setup and Infrastructure (In Progress)
+```
+
+## 📋 Current Epic: OCR Lab Implementation
+
+### Current Story: Project Setup and Infrastructure
+- **Status**: In Progress
+- **Progress**: 85% complete
 
 #### Frontend Setup
 - [x] Set up React + Vite + shadcn/ui
@@ -14,10 +28,11 @@ This document tracks all tasks for the OCR Lab project implementation with check
   - [x] Create Folders view page
   - [x] Create File upload/management page
   - [x] Create Search interface page
-  - [ ] Create Usage monitoring page
+  - [x] Create Usage monitoring page (implemented as a tab in the Dashboard)
   - [ ] Create Billing page (optional)
-- [ ] Set up protected routes with Clerk
+- [x] Set up protected routes with Clerk
 - [x] Create responsive layout with sidebar navigation
+- [ ] Write basic component tests
 
 #### Backend Infrastructure
 - [x] Set up Azure Functions
@@ -138,7 +153,7 @@ This document tracks all tasks for the OCR Lab project implementation with check
 ## 📊 Progress Tracking
 
 ### Overall Progress
-- Phase 1: Project Setup - 75% complete
+- Phase 1: Project Setup - 85% complete
 - Phase 2: Core Functionality - 40% complete
 - Phase 3: UI Development - 60% complete
 - Phase 4: Advanced Features - 10% complete
@@ -176,6 +191,9 @@ This document tracks all tasks for the OCR Lab project implementation with check
 
 ## 📝 Notes and Decisions
 
+- **2023-03-08**: Verified that Usage monitoring functionality is already implemented as a tab in the Dashboard
+- **2023-03-08**: Implemented protected routes with Clerk authentication
+- **2023-03-08**: Updated project documentation to align with the Agile workflow
 - **2023-03-07**: Enhanced file upload to Azure Blob Storage with status tracking
 - **2023-03-07**: Implemented file management endpoints (list, delete)
 - **2023-03-07**: Created API documentation for file management endpoints

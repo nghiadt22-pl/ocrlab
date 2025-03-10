@@ -1,10 +1,24 @@
 # OCR Lab Progress Tracking
 
-## Project Phases
+This document tracks the progress of the OCR Lab project implementation. For detailed story tracking, please refer to the `.ai/epic-1/story-1.story.md` file.
 
-### Phase 1: Project Setup and Infrastructure
+## Project Structure
+
+The project follows the Agile workflow defined in the `@801-workflow-agile.mdc` rule. The project structure is as follows:
+
+```
+.ai/
+├── prd.md                 # Product Requirements Document (Approved)
+├── arch.md                # Architecture Decision Record (Approved)
+└── epic-1/               # Current Epic directory (OCR Lab Implementation)
+    └── story-1.story.md  # Project Setup and Infrastructure (In Progress)
+```
+
+## Current Epic: OCR Lab Implementation
+
+### Story 1: Project Setup and Infrastructure
 - **Status**: In Progress
-- **Progress**: 75% complete
+- **Progress**: 85% complete
 - **Tasks Completed**:
   - Set up React + Vite + shadcn/ui
   - Integrate Clerk authentication
@@ -17,9 +31,10 @@
   - Create database schema (Users, Folders, Files, Usage tracking tables)
   - Set up database connection in backend
   - Implement basic CRUD operations
-- **Tasks Remaining**:
-  - Complete routing structure
   - Set up protected routes with Clerk
+  - Create Usage monitoring functionality (implemented as a tab in the Dashboard)
+- **Tasks Remaining**:
+  - Create Billing page (optional)
   - Configure Azure Queue
 
 ### Phase 2: Core Functionality
@@ -144,6 +159,23 @@
 - Need to implement proper logging for debugging
 - Need to handle file deletion from Azure Blob Storage when deleting file records
 
+## Agile Workflow Compliance
+
+- **PRD Status**: Approved (`.ai/prd.md`)
+- **Architecture Status**: Approved (`.ai/arch.md`)
+- **Current Story**: In Progress (`.ai/epic-1/story-1.story.md`)
+- **TDD Compliance**: All new code will follow TDD principles with at least 80% test coverage
+- **Story Updates**: The story file will be updated as tasks are completed
+
+## Next Steps
+
+1. Complete the remaining tasks in Story-1:
+   - Create Billing page (optional)
+   - Configure Azure Queue
+2. Update the story file as tasks are completed
+3. Once Story-1 is complete, create Story-2 (Core Functionality Development)
+4. Get approval for Story-2 before proceeding with implementation
+
 ---
 
-*Last updated: 2023-03-07* 
+*Last updated: 2023-03-08* 
