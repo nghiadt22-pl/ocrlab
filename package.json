@@ -10,7 +10,11 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
-    "deploy:function": "cd function_app && func azure functionapp publish testpl"
+    "deploy:function": "cd function_app && func azure functionapp publish testpl",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:file": "vitest run --testNamePattern"
   },
   "dependencies": {
     "@azure/storage-blob": "^12.26.0",
@@ -73,6 +77,7 @@
     "@tailwindcss/typography": "^0.5.15",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.2.0",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^22.5.5",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",

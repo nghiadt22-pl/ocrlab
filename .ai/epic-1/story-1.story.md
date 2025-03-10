@@ -36,7 +36,7 @@ Story Points: 5
       6. - [x] Create Billing page (optional)
    5. - [x] Set up protected routes with Clerk
    6. - [x] Create responsive layout with sidebar navigation
-   7. - [ ] Write basic component tests
+   7. - [x] Write basic component tests
 
 2. - [x] Backend Infrastructure
    1. - [x] Set up Azure Functions project
@@ -205,9 +205,10 @@ backend/
 - Create Usage monitoring functionality (implemented as a tab in the Dashboard)
 - Configure Azure Queue for processing jobs
 - Create Billing page with subscription management and usage tracking
+- Write basic component tests for Billing, Header, and App components
 
 ### In Progress
-- Write tests for components, API, and database
+- Write tests for API and database
 
 ### Remaining
 - Configure CI/CD pipeline
@@ -257,11 +258,12 @@ backend/
 - PostgreSQL is being used for storing metadata and user data.
 - We're following a TDD approach for development, writing tests before implementing features.
 - **Important**: All backend code must be tested both locally and in the deployed environment before marking tasks as complete.
+- **Important**: All frontend components must be tested after implementation and before marking tasks as complete, following the frontend-testing rule.
 
 ## Next Steps
 
 1. Complete the remaining tasks:
-   - Write tests for components, API, and database
+   - Write tests for API and database
    - Configure CI/CD pipeline
    - Set up development, staging, and production environments
    - Set up logging and monitoring
@@ -299,4 +301,8 @@ backend/
 - User: Create a Billing page for the OCR Lab application
 - Agent: Created a Billing page with subscription management, payment methods, usage tracking, and plan comparison features
 - Agent: Added the Billing page to the routing configuration and updated the Header component with a link to the Billing page
-- Agent: Added a link to the Billing page from the Usage tab in the Dashboard 
+- Agent: Added a link to the Billing page from the Usage tab in the Dashboard
+- User: write basic component test
+- Agent: Created basic component tests for Billing, Header, and App components using Vitest and React Testing Library
+- User: You forget to run test the component. Update or create a rule to not forget that.
+- Agent: Created a frontend-testing rule to ensure all components are tested after implementation and before marking tasks as complete 

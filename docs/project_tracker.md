@@ -32,7 +32,7 @@ The project follows the Agile workflow defined in the `@801-workflow-agile.mdc` 
   - [x] Create Billing page (optional)
 - [x] Set up protected routes with Clerk
 - [x] Create responsive layout with sidebar navigation
-- [ ] Write basic component tests
+- [x] Write basic component tests
 
 #### Backend Infrastructure
 - [x] Set up Azure Functions
@@ -194,6 +194,7 @@ The project follows the Agile workflow defined in the `@801-workflow-agile.mdc` 
 
 ## 📝 Notes and Decisions
 
+- **2023-03-12**: Created basic component tests for Billing, Header, and App components
 - **2023-03-11**: Created Billing page with subscription management, payment methods, and usage tracking
 - **2023-03-10**: Successfully tested Azure Queue implementation in deployed environment
 - **2023-03-10**: Successfully tested Azure Queue implementation locally with mock storage
@@ -224,6 +225,14 @@ The project follows the Agile workflow defined in the `@801-workflow-agile.mdc` 
 - Queue triggers must be tested with sample messages
 - Test results must be documented in the story file
 
+### Frontend Testing
+- All frontend components must have corresponding test files
+- Tests must be written using Vitest and React Testing Library
+- Tests must cover component rendering, user interactions, and state changes
+- Test coverage should aim for at least 80% of component code
+- Tests must be run and pass before marking tasks as complete
+- Test results must be documented in the story file
+
 ---
 
-*Last updated: 2023-03-10* 
+*Last updated: 2023-03-12* 

@@ -37,8 +37,9 @@ The project follows the Agile workflow defined in the `@801-workflow-agile.mdc` 
   - Test Azure Queue implementation locally
   - Test Azure Queue implementation in deployed environment
   - Create Billing page with subscription management and usage tracking
+  - Write basic component tests for Billing, Header, and App components
 - **Tasks Remaining**:
-  - Write tests (component, API, database)
+  - Write tests for API and database
 
 ### Phase 2: Core Functionality
 - **Status**: In Progress
@@ -171,6 +172,7 @@ The project follows the Agile workflow defined in the `@801-workflow-agile.mdc` 
 - **TDD Compliance**: All new code will follow TDD principles with at least 80% test coverage
 - **Story Updates**: The story file will be updated as tasks are completed
 - **Backend Testing**: All backend code must be tested both locally and in the deployed environment before marking tasks as complete
+- **Frontend Testing**: All frontend components must be tested after implementation and before marking tasks as complete
 
 ## Next Steps
 
@@ -182,6 +184,8 @@ The project follows the Agile workflow defined in the `@801-workflow-agile.mdc` 
 
 ## Recent Updates
 
+- **2023-03-12**: Created a frontend-testing rule to ensure all components are tested after implementation
+- **2023-03-12**: Created basic component tests for Billing, Header, and App components
 - **2023-03-11**: Created Billing page with subscription management, payment methods, and usage tracking
 - **2023-03-10**: Successfully tested Azure Queue implementation in deployed environment
 - **2023-03-10**: Successfully tested Azure Queue implementation locally with mock storage

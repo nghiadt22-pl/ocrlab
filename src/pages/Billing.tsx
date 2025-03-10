@@ -242,7 +242,7 @@ const Billing: React.FC = () => {
                           <TableCell>{invoice.amount}</TableCell>
                           <TableCell>
                             <Badge 
-                              variant={invoice.status === 'Paid' ? 'success' : 'destructive'}
+                              variant={invoice.status === 'Paid' ? 'secondary' : 'destructive'}
                               className="bg-green-100 text-green-800 hover:bg-green-100"
                             >
                               {invoice.status}
