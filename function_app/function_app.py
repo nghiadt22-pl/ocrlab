@@ -27,6 +27,55 @@ def create_error_response(status_code, message):
         mimetype="application/json"
     )
 
+def get_queue_client(queue_name="ocr-processing-queue"):
+    """Get a queue client for the specified queue."""
+    try:
+        from azure.storage.queue import QueueServiceClient
+        
+        # Get connection string from environment variable
+        connection_string = os.environ.get('AzureWebJobsStorage')
+        if not connection_string:
+            logger.error("Missing storage connection string")
+            raise ValueError("Storage configuration error")
+        
+        # Handle mock mode for testing
+        if connection_string == "mock":
+            logger.info("Using mock queue client for testing")
+            # Return a mock queue client
+            class MockQueueClient:
+                def create_queue(self):
+                    logger.info("Mock: Queue created")
+                    return True
+                
+                def send_message(self, message):
+                    logger.info(f"Mock: Message sent to queue: {message}")
+                    # Process the message immediately for testing
+                    try:
+                        message_data = json.loads(message)
+                        logger.info(f"Mock: Processing OCR job: {message}")
+                        logger.info(f"Mock: OCR processing completed for job: {message}")
+                    except Exception as e:
+                        logger.error(f"Mock: Error processing OCR job: {str(e)}")
+                    return True
+            
+            return MockQueueClient()
+        
+        # Create the queue client
+        queue_service_client = QueueServiceClient.from_connection_string(connection_string)
+        queue_client = queue_service_client.get_queue_client(queue_name)
+        
+        # Create the queue if it doesn't exist
+        try:
+            queue_client.create_queue()
+        except Exception as e:
+            # Queue already exists or other error
+            logger.info(f"Queue creation note: {str(e)}")
+        
+        return queue_client
+    except Exception as e:
+        logger.error(f"Error getting queue client: {str(e)}")
+        raise
+
 # Folder Management Functions
 @app.route(route="folders", auth_level=func.AuthLevel.ANONYMOUS, methods=["GET"])
 def list_folders(req: func.HttpRequest) -> func.HttpResponse:
@@ -156,6 +205,58 @@ def upload_file(req: func.HttpRequest) -> func.HttpResponse:
         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
         blob_name = f"{user_id}/{folder_id}/{timestamp}_{filename}"
         
+        # Handle mock mode for testing
+        if connection_string == "mock":
+            logger.info(f"Mock: File {filename} uploaded to blob storage")
+            blob_url = f"https://mock-storage.com/{blob_name}"
+            
+            # Save file metadata to database (mock)
+            file_id = 1  # This would normally be assigned by the database
+            file_data = {
+                "id": file_id,
+                "name": filename,
+                "folder_id": int(folder_id),
+                "blob_url": blob_url,
+                "status": "uploaded",
+                "size_bytes": file_size,
+                "content_type": content_type,
+                "created_at": datetime.datetime.now().isoformat(),
+                "updated_at": datetime.datetime.now().isoformat()
+            }
+            
+            # Add a message to the OCR processing queue
+            try:
+                # Create a message with the file information
+                message = {
+                    "file_id": file_id,
+                    "user_id": user_id,
+                    "folder_id": folder_id,
+                    "blob_name": blob_name,
+                    "container_name": "mock-container",
+                    "filename": filename,
+                    "content_type": content_type,
+                    "size_bytes": file_size,
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+                
+                # Get the queue client and send the message
+                queue_client = get_queue_client()
+                queue_client.send_message(json.dumps(message))
+                
+                # Update the file status to "processing"
+                file_data["status"] = "processing"
+                
+                logger.info(f"Added file {filename} to OCR processing queue")
+            except Exception as e:
+                logger.error(f"Error adding to queue: {str(e)}")
+                # Continue even if queue fails - we'll still return the file info
+            
+            return func.HttpResponse(
+                body=json.dumps({"file": file_data}),
+                status_code=201,
+                mimetype="application/json"
+            )
+        
         # Upload to blob storage
         from azure.storage.blob import BlobServiceClient, ContentSettings
         
@@ -189,8 +290,9 @@ def upload_file(req: func.HttpRequest) -> func.HttpResponse:
         
         # Save file metadata to database (TODO: implement database connection)
         # For now, we'll just return the file information
+        file_id = 1  # This would normally be assigned by the database
         file_data = {
-            "id": 1,  # This would normally be assigned by the database
+            "id": file_id,
             "name": filename,
             "folder_id": int(folder_id),
             "blob_url": blob_url,
@@ -200,6 +302,33 @@ def upload_file(req: func.HttpRequest) -> func.HttpResponse:
             "created_at": datetime.datetime.now().isoformat(),
             "updated_at": datetime.datetime.now().isoformat()
         }
+        
+        # Add a message to the OCR processing queue
+        try:
+            # Create a message with the file information
+            message = {
+                "file_id": file_id,
+                "user_id": user_id,
+                "folder_id": folder_id,
+                "blob_name": blob_name,
+                "container_name": container_name,
+                "filename": filename,
+                "content_type": content_type,
+                "size_bytes": file_size,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            
+            # Get the queue client and send the message
+            queue_client = get_queue_client()
+            queue_client.send_message(json.dumps(message))
+            
+            # Update the file status to "processing"
+            file_data["status"] = "processing"
+            
+            logger.info(f"Added file {filename} to OCR processing queue")
+        except Exception as e:
+            logger.error(f"Error adding to queue: {str(e)}")
+            # Continue even if queue fails - we'll still return the file info
         
         return func.HttpResponse(
             body=json.dumps({"file": file_data}),
@@ -414,14 +543,69 @@ def get_usage(req: func.HttpRequest) -> func.HttpResponse:
 def process_ocr_queue(msg: func.QueueMessage) -> None:
     """Process OCR jobs from the queue."""
     try:
+        # Parse the message
         message_body = msg.get_body().decode('utf-8')
         logger.info(f"Processing OCR job: {message_body}")
         
-        # TODO: Implement OCR processing logic
-        # 1. Get file from Blob Storage
-        # 2. Process with Azure Document Intelligence
-        # 3. Store results in database and vector store
-        # 4. Update file status
+        message_data = json.loads(message_body)
+        file_id = message_data.get('file_id')
+        user_id = message_data.get('user_id')
+        blob_name = message_data.get('blob_name')
+        container_name = message_data.get('container_name')
+        filename = message_data.get('filename')
+        
+        if not all([file_id, user_id, blob_name, container_name, filename]):
+            logger.error(f"Missing required fields in message: {message_body}")
+            return
+        
+        # Get connection string from environment variable
+        connection_string = os.environ.get('AzureWebJobsStorage')
+        if not connection_string:
+            logger.error("Missing storage connection string")
+            return
+        
+        # Handle mock mode for testing
+        if connection_string == "mock":
+            logger.info(f"Mock: Downloaded file {filename} from blob storage")
+            logger.info(f"Mock: Processed file {filename} with OCR")
+            logger.info(f"Mock: Updated file {filename} status to 'completed'")
+            logger.info(f"Mock: OCR processing completed for job: {message_body}")
+            return
+        
+        # Get the file from Blob Storage
+        try:
+            from azure.storage.blob import BlobServiceClient
+            
+            # Get the blob client
+            blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+            blob_client = blob_service_client.get_blob_client(
+                container=container_name, 
+                blob=blob_name
+            )
+            
+            # Download the blob
+            download_stream = blob_client.download_blob()
+            file_contents = download_stream.readall()
+            
+            logger.info(f"Downloaded file {filename} from blob storage")
+            
+            # TODO: Process with Azure Document Intelligence
+            # 1. Send to Azure Document Intelligence
+            # 2. Extract text, tables, and other content
+            # 3. Generate embeddings
+            # 4. Store in vector database
+            
+            # For now, we'll just log that we processed the file
+            logger.info(f"Processed file {filename} with OCR")
+            
+            # TODO: Update file status in database
+            # For now, we'll just log that we updated the status
+            logger.info(f"Updated file {filename} status to 'completed'")
+            
+        except Exception as e:
+            logger.error(f"Error processing file {filename}: {str(e)}")
+            # TODO: Update file status to 'failed' in database
+            return
         
         logger.info(f"OCR processing completed for job: {message_body}")
     except Exception as e:

@@ -1,0 +1,144 @@
+---
+description: ALWAYS test backend code both locally and in deployed environments before marking tasks as complete
+globs: function_app/**/*.py
+alwaysApply: false
+---
+# Backend Testing Standards
+
+<version>1.0.0</version>
+
+## Context
+
+Backend code requires thorough testing to ensure functionality, reliability, and performance. This rule ensures that all backend code is properly tested both locally and in the deployed environment before marking tasks as complete.
+
+## Requirements
+
+- All backend code must be tested locally before deployment
+- All backend code must be tested in the deployed environment (Azure Functions)
+- Tests must cover both success and error scenarios
+- API endpoints must be tested with appropriate request payloads
+- Queue triggers must be tested with sample messages
+- Test results must be documented in the story file
+
+## Testing Process
+
+### Local Testing
+
+1. Run the Azure Functions locally using the Azure Functions Core Tools
+   ```bash
+   cd function_app
+   func start
+   ```
+
+2. Test API endpoints using tools like Postman, curl, or the Azure Functions HTTP test in VS Code
+   ```bash
+   curl -X POST http://localhost:7071/api/upload -H "Content-Type: application/json" -d '{"key": "value"}'
+   ```
+
+3. Test queue triggers by adding messages to the local storage emulator
+   ```bash
+   az storage message put --content "test message" --queue-name ocr-processing-queue
+   ```
+
+4. Verify logs for expected behavior and error handling
+
+### Deployed Testing
+
+1. Deploy the Azure Functions to the Azure environment
+   ```bash
+   cd function_app
+   func azure functionapp publish <app-name>
+   ```
+
+2. Test API endpoints using the deployed URL
+   ```bash
+   curl -X POST https://<app-name>.azurewebsites.net/api/upload -H "Content-Type: application/json" -d '{"key": "value"}'
+   ```
+
+3. Test queue triggers by adding messages to the Azure Storage queue
+   ```bash
+   az storage message put --account-name <storage-account> --queue-name ocr-processing-queue --content "test message"
+   ```
+
+4. Verify Application Insights logs for expected behavior and error handling
+
+## Documentation
+
+Document test results in the story file:
+
+```markdown
+### Testing Results
+
+#### Local Testing
+- API endpoints tested: upload, files, query
+- Queue triggers tested: ocr-processing-queue
+- Results: All tests passed
+
+#### Deployed Testing
+- API endpoints tested: upload, files, query
+- Queue triggers tested: ocr-processing-queue
+- Results: All tests passed with expected performance
+```
+
+## Examples
+
+<example>
+# Testing the Azure Queue Implementation
+
+## Local Testing
+1. Started the Azure Functions locally
+   ```bash
+   cd function_app
+   func start
+   ```
+
+2. Uploaded a test file to trigger the queue message
+   ```bash
+   curl -X POST http://localhost:7071/api/upload -F "file=@test.pdf" -H "x-user-id: test-user" -H "x-folder-id: 1"
+   ```
+
+3. Verified the queue message was created and processed by checking the logs
+   ```
+   [2023-03-08T12:34:56.789Z] Processing OCR job: {"file_id": 1, "user_id": "test-user", "folder_id": "1", ...}
+   [2023-03-08T12:34:57.123Z] Downloaded file test.pdf from blob storage
+   [2023-03-08T12:34:58.456Z] Processed file test.pdf with OCR
+   [2023-03-08T12:34:59.789Z] Updated file test.pdf status to 'completed'
+   ```
+
+## Deployed Testing
+1. Deployed the Azure Functions to Azure
+   ```bash
+   cd function_app
+   func azure functionapp publish ocrlab-functions
+   ```
+
+2. Uploaded a test file to the deployed endpoint
+   ```bash
+   curl -X POST https://ocrlab-functions.azurewebsites.net/api/upload -F "file=@test.pdf" -H "x-user-id: test-user" -H "x-folder-id: 1"
+   ```
+
+3. Verified the queue message was processed by checking Application Insights logs
+   ```
+   [2023-03-08T13:45:56.789Z] Processing OCR job: {"file_id": 1, "user_id": "test-user", "folder_id": "1", ...}
+   [2023-03-08T13:45:57.123Z] Downloaded file test.pdf from blob storage
+   [2023-03-08T13:45:58.456Z] Processed file test.pdf with OCR
+   [2023-03-08T13:45:59.789Z] Updated file test.pdf status to 'completed'
+   ```
+
+All tests passed successfully, confirming the Azure Queue implementation works as expected.
+</example>
+
+<example type="invalid">
+# Implemented Azure Queue
+
+Added Azure Queue functionality to the upload_file function and created a queue trigger function to process OCR jobs.
+
+The code looks good and should work fine.
+</example>
+
+## Critical Rules
+
+- Never mark a backend task as complete without testing both locally and in the deployed environment
+- Always document test results in the story file
+- Always test both success and error scenarios
+- Always verify logs to confirm expected behavior 

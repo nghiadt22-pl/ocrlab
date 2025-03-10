@@ -11,7 +11,8 @@ import {
   Users, 
   FileUp, 
   FileSearch,
-  Clock
+  Clock,
+  CreditCard
 } from 'lucide-react';
 import Header from '@/components/Header';
 import { Link } from 'react-router-dom';
@@ -228,6 +229,15 @@ const Dashboard: React.FC = () => {
                         <span>45% of monthly limit</span>
                         <span>100%</span>
                       </div>
+                    </div>
+                    
+                    <div className="pt-4 flex justify-center">
+                      <Button asChild>
+                        <Link to="/billing" className="flex items-center gap-2">
+                          <CreditCard className="h-4 w-4" />
+                          View Billing & Subscription
+                        </Link>
+                      </Button>
                     </div>
                   </div>
                 </CardContent>

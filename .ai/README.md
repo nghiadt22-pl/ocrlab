@@ -44,13 +44,12 @@ The OCR Lab project follows an Agile workflow with the following key components:
 - **Current Epic**: Epic-1: OCR Lab Implementation
 - **Current Story**: Story-1: Project Setup and Infrastructure
 - **Story Status**: In Progress
-- **Progress**: 85% complete
+- **Progress**: 90% complete
 
 ## Next Steps
 
 1. Complete the remaining tasks in Story-1:
    - Create Billing page (optional)
-   - Configure Azure Queue for processing jobs
    - Write tests for components, API, and database
    - Configure CI/CD pipeline
    - Set up development, staging, and production environments

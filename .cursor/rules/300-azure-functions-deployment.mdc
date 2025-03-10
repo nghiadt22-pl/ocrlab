@@ -1,0 +1,53 @@
+---
+description: USE deployment command func azure functionapp publish testpl when deploying Azure Functions
+globs: function_app/**/*.py
+alwaysApply: false
+---
+
+# Azure Functions Deployment Commands
+
+<version>1.0.0</version>
+
+## Context
+- When deploying Azure Functions to Azure
+- When testing in deployed environment
+- When updating Azure Functions code
+
+## Requirements
+- Use the correct deployment command for the OCR Lab project
+- Ensure all dependencies are installed before deployment
+- Verify deployment success after command execution
+
+## Deployment Commands
+
+### Primary Deployment Command
+```bash
+func azure functionapp publish testpl
+```
+
+### Deployment Process
+1. Navigate to the function_app directory
+2. Run the deployment command
+3. Verify deployment success
+4. Test the deployed functions
+
+## Examples
+
+<example>
+# Deploy Azure Functions to testpl
+cd function_app
+func azure functionapp publish testpl
+
+# This deploys all functions to the testpl Azure Function App
+</example>
+
+<example type="invalid">
+# Incorrect deployment command
+func deploy
+# This command doesn't exist and will fail
+</example>
+
+## Notes
+- The testpl function app is the designated deployment target for the OCR Lab project
+- Always test locally before deploying to Azure
+- After deployment, test the Azure Queue implementation in the deployed environment 

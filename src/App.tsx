@@ -12,6 +12,7 @@ import Dashboard from "./pages/Dashboard";
 import Folders from "./pages/Folders";
 import FolderFiles from "./pages/FolderFiles";
 import Search from "./pages/Search";
+import Billing from "./pages/Billing";
 
 const App = () => (
   <TooltipProvider>
@@ -67,6 +68,14 @@ const App = () => (
         element={
           <ProtectedRoute>
             <Search />
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/billing" 
+        element={
+          <ProtectedRoute>
+            <Billing />
           </ProtectedRoute>
         } 
       />

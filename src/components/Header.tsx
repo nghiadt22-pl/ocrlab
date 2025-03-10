@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileTextIcon, LayoutDashboard, FolderIcon, SearchIcon } from 'lucide-react';
+import { FileTextIcon, LayoutDashboard, FolderIcon, SearchIcon, CreditCard } from 'lucide-react';
 import { Button } from './ui/button';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
@@ -73,6 +73,17 @@ const Header: React.FC = () => {
               >
                 <SearchIcon className="h-4 w-4" />
                 Search
+              </Link>
+              <Link 
+                to="/billing" 
+                className={`px-3 py-2 text-sm rounded-md transition-colors flex items-center gap-1 ${
+                  location.pathname === '/billing' 
+                    ? 'bg-primary/10 text-primary' 
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <CreditCard className="h-4 w-4" />
+                Billing
               </Link>
             </nav>
           )}
