@@ -1,0 +1,114 @@
+---
+description: ALWAYS run tests before updating progress documentation to ensure quality and prevent regressions
+globs: **/*.{ts,tsx,js,jsx,py}
+alwaysApply: false
+---
+# Testing Workflow Standards
+
+<version>1.0.0</version>
+
+## Context
+
+Maintaining a consistent testing workflow is critical for ensuring code quality and preventing regressions. This rule enforces a strict "test-first" approach to documentation updates, ensuring that all code changes are properly tested before progress is documented or tasks are marked as complete.
+
+## Requirements
+
+- All tests must be run and pass before updating any progress documentation
+- Progress tracking documents must only be updated after successful test execution
+- Story files must only be updated with completion status after tests pass
+- Test results must be documented in the story file before marking tasks as complete
+- Both frontend and backend tests must follow this workflow
+
+## Testing Workflow
+
+### Step 1: Implement Code Changes
+- Write or modify code according to requirements
+- Follow TDD principles where appropriate
+
+### Step 2: Write and Run Tests
+- For frontend components:
+  - Create/update test files in `src/__tests__`
+  - Run tests with `npm test`
+  - Verify all tests pass
+
+- For backend code:
+  - Test locally with appropriate tools
+  - Deploy and test in the deployed environment
+  - Verify all tests pass in both environments
+
+### Step 3: Document Test Results
+- Add test results to the story file
+- Include specific details about what was tested and the results
+
+### Step 4: Update Progress Documentation
+- Only after tests pass, update:
+  - Story file task status
+  - Progress tracking document
+  - Project tracker document
+  - Any other progress documentation
+
+## Examples
+
+<example>
+# Proper Testing Workflow
+
+## Step 1: Implement Code
+- Implemented the Billing component with subscription management features
+
+## Step 2: Write and Run Tests
+```bash
+# Create test file
+touch src/__tests__/Billing.test.tsx
+
+# Write tests for rendering, tab switching, and user interactions
+# ...
+
+# Run tests
+npm test
+
+# Output:
+# PASS  src/__tests__/Billing.test.tsx
+# Billing Component
+#   ✓ renders the billing page title (24ms)
+#   ✓ switches tabs when clicked (45ms)
+#   ✓ toggles auto-renew switch (38ms)
+```
+
+## Step 3: Document Test Results
+Updated story file with test results:
+```markdown
+### Testing Results
+#### Component Testing
+- Components tested: Billing
+- Test coverage: 85%
+- Results: All tests passed
+```
+
+## Step 4: Update Progress Documentation
+- Updated story file to mark Billing component task as complete
+- Updated progress tracking document to reflect completion
+- Updated project tracker with current status
+</example>
+
+<example type="invalid">
+# Incorrect Testing Workflow
+
+## Step 1: Implement Code
+- Implemented the Billing component with subscription management features
+
+## Step 2: Update Progress Documentation
+- Updated story file to mark Billing component task as complete
+- Updated progress tracking document to reflect completion
+
+## Step 3: Write Tests (Later)
+- Will write tests for the Billing component when there's time
+</example>
+
+## Critical Rules
+
+- 🚫 NEVER update progress documentation before running tests
+- 🚫 NEVER mark tasks as complete before verifying tests pass
+- 🚫 NEVER skip documenting test results in the story file
+- ✅ ALWAYS run frontend tests with `npm test` before updating progress
+- ✅ ALWAYS test backend code both locally and in deployed environments before updating progress
+- ✅ ALWAYS include specific test results in documentation updates 
