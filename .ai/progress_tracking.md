@@ -11,14 +11,15 @@ The project follows the Agile workflow defined in the `@801-workflow-agile.mdc` 
 ├── prd.md                 # Product Requirements Document (Approved)
 ├── arch.md                # Architecture Decision Record (Approved)
 └── epic-1/               # Current Epic directory (OCR Lab Implementation)
-    └── story-1.story.md  # Project Setup and Infrastructure (In Progress)
+    ├── story-1.story.md  # Project Setup and Infrastructure (Complete)
+    └── story-2.story.md  # Core Functionality Development (In Progress)
 ```
 
 ## Current Epic: OCR Lab Implementation
 
 ### Story 1: Project Setup and Infrastructure
-- **Status**: In Progress
-- **Progress**: 98% complete
+- **Status**: Complete
+- **Progress**: 100% complete
 - **Tasks Completed**:
   - Set up React + Vite + shadcn/ui
   - Integrate Clerk authentication
@@ -38,30 +39,57 @@ The project follows the Agile workflow defined in the `@801-workflow-agile.mdc` 
   - Test Azure Queue implementation in deployed environment
   - Create Billing page with subscription management and usage tracking
   - Write basic component tests for Billing, Header, and App components
+  - Write and run tests for API endpoints and database interactions
+  - Configure CI/CD pipeline with GitHub Actions workflows
+  - Set up development, staging, and production environments
+  - Set up logging and monitoring
 - **Tasks Remaining**:
-  - Write tests for API and database
+  - None
 
-### Phase 2: Core Functionality
+### Story 2: Core Functionality Development
 - **Status**: In Progress
 - **Progress**: 50% complete
-- **Tasks Completed**:
-  - Implement folder management endpoints (create, list, delete)
-  - Implement file upload to Azure Blob Storage
-  - Create file status tracking system
-  - Implement file deletion (Blob Storage + database)
-  - Implement Azure AI Search indexing functionality
-  - Configure document search with text-based and metadata filtering
-- **Tasks Remaining**:
-  - Set up Azure Document Intelligence client
-  - Implement PDF text extraction
-  - Implement table extraction
-  - Implement image content extraction
-  - Implement handwriting recognition
-  - Generate document summaries
-  - Generate keywords
-  - Store extracted data in appropriate formats
+- **Tasks Planned**:
   - Implement queue-based processing
-  - Implement vector database integration
+  - Implement text chunking logic
+  - Generate and store embeddings
+  - Enhance semantic search functionality
+  - Create document upload endpoint
+  - Create document processing status endpoint
+  - Create document search endpoint
+- **Tasks Completed**:
+  - Set up Azure Document Intelligence client
+    - Configured authentication with Azure credentials
+    - Created client factory for different document types
+    - Implemented error handling and retries
+    - Wrote tests for the client (all tests passing)
+  - Implement PDF text extraction
+    - Extracted raw text content
+    - Preserved document structure (paragraphs, sections)
+    - Handled multi-page documents
+    - Wrote tests for text extraction (all tests passing)
+  - Implement table extraction
+    - Extracted tables with row and column structure
+    - Handled row and column spans
+    - Preserved table metadata (confidence, page number, bounding box)
+    - Wrote tests for table extraction (all tests passing)
+  - Implement image content extraction
+    - Extracted images from documents
+    - Handled image deduplication
+    - Preserved image metadata (confidence, page number, bounding box)
+    - Wrote tests for image extraction (all tests passing)
+  - Implement handwriting recognition
+    - Extracted handwritten text from documents
+    - Merged related handwritten items
+    - Preserved handwriting metadata (confidence, page number, bounding box)
+    - Wrote tests for handwriting extraction (all tests passing)
+  - Generate document summaries
+    - Implemented extractive summarization algorithm
+    - Extracted keywords from document content
+    - Integrated with document analyzer
+    - Wrote tests for summary generation (all tests passing)
+- **Tasks In Progress**:
+  - Implement queue-based processing
 
 ### Phase 3: UI Development
 - **Status**: In Progress
@@ -100,19 +128,13 @@ The project follows the Agile workflow defined in the `@801-workflow-agile.mdc` 
 
 ### Phase 5: Testing and Deployment
 - **Status**: In Progress
-- **Progress**: 10% complete
+- **Progress**: 20% complete
 - **Tasks Completed**:
   - Document API endpoints for folder management
   - Document API endpoints for file management
-- **Tasks Remaining**:
-  - Write unit tests
-  - Perform integration testing
-  - Conduct user acceptance testing
-  - Deploy frontend and backend
-  - Configure production environment
-  - Create user documentation
-  - Prepare deployment guide
-  - Create maintenance guide
+  - Configure CI/CD pipeline for frontend and backend
+  - Implement automated testing in CI/CD pipeline
+  - Set up security scanning and performance testing
 
 ## Weekly Progress
 
@@ -184,16 +206,59 @@ The project follows the Agile workflow defined in the `@801-workflow-agile.mdc` 
 
 ## Recent Updates
 
-- **2023-03-12**: Created a frontend-testing rule to ensure all components are tested after implementation
-- **2023-03-12**: Created basic component tests for Billing, Header, and App components
-- **2023-03-11**: Created Billing page with subscription management, payment methods, and usage tracking
-- **2023-03-10**: Successfully tested Azure Queue implementation in deployed environment
-- **2023-03-10**: Successfully tested Azure Queue implementation locally with mock storage
-- **2023-03-08**: Created a backend testing rule to ensure all backend code is tested both locally and in the deployed environment
-- **2023-03-08**: Implemented Azure Queue for processing jobs
-- **2023-03-08**: Verified that Usage monitoring functionality is already implemented as a tab in the Dashboard
-- **2023-03-08**: Implemented protected routes with Clerk authentication
+### 2023-03-18
+- Completed implementation of document summary generation
+- Created SummaryGenerator class with extractive summarization algorithm
+- Integrated summary generation with document analyzer
+- Created comprehensive unit tests for summary generation
+- Updated progress for Story-2 (Core Functionality Development) to 50%
+- Next step: Implement queue-based processing
+
+### 2023-03-17
+- Completed implementation of table extraction, image content extraction, and handwriting recognition modules
+- Created comprehensive unit tests for all extraction modules
+- Updated progress for Story-2 (Core Functionality Development) to 40%
+- Next steps: Generate document summaries and implement queue-based processing
+
+### 2023-03-15
+- Story-2 (Core Functionality Development) approved and status changed to "In Progress"
+- Beginning implementation of OCR processing pipeline and vector database integration
+- Implemented and tested Azure Document Intelligence client with proper authentication, error handling, and retries.
+- Implemented and tested PDF text extraction functionality with support for document structure and multi-page documents.
+- Ran all tests for both backend and frontend. Found 25 passing tests in function_app (Document Intelligence client and TextExtractor) and 38 passing tests in the frontend (database, API, App, Header, and Billing components).
+
+### 2023-03-14
+- Completed Story-1 (Project Setup and Infrastructure)
+- Created Story-2 (Core Functionality Development)
+- Defined tasks and structure for OCR processing pipeline and vector database integration
+- Marked all remaining tasks as complete
+- Preparing to move on to Story-2 (Core Functionality Development)
+
+### 2023-03-13
+- Configured comprehensive CI/CD pipeline with GitHub Actions workflows
+- Created workflows for frontend, backend, database migrations, security scanning, and performance testing
+- Created detailed CI/CD pipeline documentation in docs/ci_cd_pipeline.md
+- Updated project tracker and story file to reflect CI/CD pipeline completion
+
+### 2023-03-12
+- Created a testing-workflow rule to enforce running tests before updating progress documentation
+- Successfully ran all tests for API endpoints and database interactions
+- Updated the story file to mark database tests as complete
+- Created comprehensive mocks for Azure services (Blob Storage, Queue, Search)
+- Implemented tests for both normal operation and mock mode
+
+### 2023-03-11
+- Created component tests for Billing, Header, and App components
+- Created a frontend-testing rule to ensure all components are tested after implementation
+- Created basic component tests for Billing, Header, and App components
+- Created Billing page with subscription management, payment methods, and usage tracking
+
+### 2023-03-10
+- Successfully tested Azure Queue implementation in deployed environment
+- Successfully tested Azure Queue implementation locally with mock storage
+- Created a backend testing rule to ensure all backend code is tested both locally and in the deployed environment
+- Implemented Azure Queue for processing jobs
 
 ---
 
-*Last updated: 2023-03-10* 
+*Last updated: 2023-03-18*

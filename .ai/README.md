@@ -60,12 +60,4 @@ The OCR Lab project follows an Agile workflow with the following key components:
 
 ## Related Documentation
 
-For more detailed information about the project, please refer to the following documents:
-
-- `docs/agile-readme.md`: Comprehensive documentation of the Agile workflow
-- `docs/project_tracker.md`: Detailed tracking of all project tasks
-- `docs/progress_tracking.md`: Progress tracking for the project
-
----
-
 *Last updated: 2023-03-08* 

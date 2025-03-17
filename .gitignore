@@ -36,3 +36,4 @@ function_app/local.settings.json
 # Documentation and templates
 xnotes/
 docs/
+.vercel
