@@ -1,9 +1,8 @@
 ---
-description: USE deployment command func azure functionapp publish testpl when deploying Azure Functions
+description: 
 globs: function_app/**/*.py
 alwaysApply: false
 ---
-
 # Azure Functions Deployment Commands
 
 <version>1.0.0</version>

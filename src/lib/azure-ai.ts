@@ -1,4 +1,4 @@
-import { ExtractedItem, ProcessedDocument } from './types';
+import { ExtractedItem, ProcessedDocument, ContentType } from './types';
 import { uploadFileToBlob } from './azure-storage';
 import { indexDocumentInSearch } from './azure-search';
 import { toast } from 'sonner';
@@ -6,6 +6,8 @@ import { toast } from 'sonner';
 // Azure Document Intelligence API credentials
 const AZURE_ENDPOINT = "https://testpl.cognitiveservices.azure.com/";
 const AZURE_API_KEY = "4Isi8XsQLdLY9SrbRSvsNv47A9CX4RKKZZrk3CPROhmYQic1UA49JQQJ99BAACqBBLyXJ3w3AAALACOGdjHl";
+// API version for Azure Document Intelligence
+const API_VERSION = "2024-11-30";
 
 /**
  * Processes a PDF file using Azure Document Intelligence
@@ -71,14 +73,14 @@ export async function processPdfDocument(
  * Submits a document to the Azure Document Intelligence API for analysis
  */
 async function submitDocumentForAnalysis(file: File): Promise<string> {
-  console.log('Submitting document for analysis...');
+  console.log('Submitting document to Azure Document Intelligence for analysis...');
   
   // Create form data with the file
   const formData = new FormData();
   formData.append('file', file);
   
   // Make the API request
-  const response = await fetch(`${AZURE_ENDPOINT}/formrecognizer/documentModels/prebuilt-layout:analyze?api-version=2023-07-31`, {
+  const response = await fetch(`${AZURE_ENDPOINT}/documentintelligence/documentModels/prebuilt-layout:analyze?api-version=${API_VERSION}`, {
     method: 'POST',
     headers: {
       'Ocp-Apim-Subscription-Key': AZURE_API_KEY,
@@ -103,7 +105,7 @@ async function submitDocumentForAnalysis(file: File): Promise<string> {
 }
 
 /**
- * Polls the Azure API operation status until document processing is complete
+ * Polls the Azure Document Intelligence API operation status until document processing is complete
  */
 async function pollForResults(operationUrl: string): Promise<any> {
   console.log('Polling for results...');
@@ -147,10 +149,10 @@ async function pollForResults(operationUrl: string): Promise<any> {
 }
 
 /**
- * Transforms Azure API results into the application's format
+ * Transforms Azure Document Intelligence API results into the application's format
  */
 function transformAzureResults(azureResult: any): ExtractedItem[] {
-  console.log('Transforming Azure results...');
+  console.log('Transforming Azure Document Intelligence results...');
   
   const extractedItems: ExtractedItem[] = [];
   const analyzeResult = azureResult.analyzeResult;
@@ -208,8 +210,28 @@ function transformAzureResults(azureResult: any): ExtractedItem[] {
     }));
   }
   
-  // Process figures
-  if (analyzeResult.documents) {
+  // Process images/figures
+  if (analyzeResult.figures) {
+    extractedItems.push(...analyzeResult.figures.map((figure: any, index: number) => ({
+      id: `figure-${index}`,
+      type: 'figure' as const,
+      content: figure.content || 'https://placehold.co/600x400/png',
+      confidence: figure.confidence || 0.8,
+      pageNumber: figure.pageNumber || 1,
+      boundingBox: figure.boundingBox
+    })));
+  } else if (analyzeResult.images) {
+    // Fallback to the old 'images' property if 'figures' is not available
+    extractedItems.push(...analyzeResult.images.map((image: any, index: number) => ({
+      id: `figure-${index}`,
+      type: 'figure' as const,
+      content: image.content || 'https://placehold.co/600x400/png',
+      confidence: image.confidence || 0.8,
+      pageNumber: image.pageNumber || 1,
+      boundingBox: image.boundingBox
+    })));
+  } else if (analyzeResult.documents) {
+    // Fallback to the old method if images array is not available
     const figureCandidates = analyzeResult.documents.flatMap((doc: any) => {
       return doc.fields || {};
     });
@@ -228,8 +250,18 @@ function transformAzureResults(azureResult: any): ExtractedItem[] {
     });
   }
   
-  // Extract handwriting if available (may require specific model version)
-  if (analyzeResult.styles) {
+  // Process handwritten items
+  if (analyzeResult.handwritten_items) {
+    extractedItems.push(...analyzeResult.handwritten_items.map((item: any, index: number) => ({
+      id: item.id || `handwriting-${index}`,
+      type: 'handwriting' as const,
+      content: item.content || 'Handwritten text',
+      confidence: item.confidence || 0.8,
+      pageNumber: item.page_number || 1,
+      boundingBox: item.bounding_box
+    })));
+  } else if (analyzeResult.styles) {
+    // Fallback to the old method if handwritten_items array is not available
     const handwrittenTexts = [];
     
     // Find content with handwritten style
@@ -255,6 +287,24 @@ function transformAzureResults(azureResult: any): ExtractedItem[] {
     });
     
     extractedItems.push(...handwrittenTexts);
+  }
+  
+  // If extracted_items is available directly from the API, use those items as well
+  if (analyzeResult.extracted_items) {
+    // Convert the unified items to our format
+    const unifiedItems = analyzeResult.extracted_items.map((item: any, index: number) => ({
+      id: item.id || `item-${index}`,
+      type: item.type as ContentType,
+      content: item.content,
+      confidence: item.confidence || 0.8,
+      pageNumber: item.page_number || 1,
+      boundingBox: item.bounding_box
+    }));
+    
+    // Add them to our extracted items, avoiding duplicates by ID
+    const existingIds = new Set(extractedItems.map(item => item.id));
+    const newItems = unifiedItems.filter(item => !existingIds.has(item.id));
+    extractedItems.push(...newItems);
   }
   
   console.log(`Extracted ${extractedItems.length} items:`, 

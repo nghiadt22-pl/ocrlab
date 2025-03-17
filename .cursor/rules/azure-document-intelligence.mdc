@@ -1,0 +1,64 @@
+---
+description: 
+globs: function_app/**/*.py
+alwaysApply: false
+---
+# Azure Document Intelligence Usage
+
+<version>1.0.0</version>
+
+## Context
+- When working with document processing in Azure
+- When extracting text, tables, or other content from documents
+
+## Requirements
+- Always use the latest Azure Document Intelligence SDK (`azure-ai-documentintelligence`)
+- Never use the deprecated Azure Form Recognizer SDK
+- Follow the official migration guide when updating existing code
+- Use the appropriate client classes and methods from the new SDK
+
+## Migration Notes
+- `FormRecognizerClient` → `DocumentIntelligenceClient`
+- `DocumentAnalysisClient` → `DocumentIntelligenceClient`
+- `begin_analyze_document` → `begin_analyze_document`
+- Import from `azure.ai.documentintelligence` instead of `azure.ai.formrecognizer`
+
+## Examples
+
+<example>
+# Correct usage with latest SDK
+from azure.ai.documentintelligence import DocumentIntelligenceClient
+from azure.core.credentials import AzureKeyCredential
+
+# Initialize the Document Intelligence Client
+document_intelligence_client = DocumentIntelligenceClient(
+    endpoint="https://your-endpoint.cognitiveservices.azure.com/",
+    credential=AzureKeyCredential("your-api-key")
+)
+
+# Analyze a document
+poller = document_intelligence_client.begin_analyze_document(
+    "prebuilt-layout", document=open("sample.pdf", "rb")
+)
+result = poller.result()
+</example>
+
+<example type="invalid">
+# Incorrect usage with deprecated SDK
+from azure.ai.formrecognizer import FormRecognizerClient
+from azure.core.credentials import AzureKeyCredential
+
+# Initialize the Form Recognizer Client (DEPRECATED)
+form_recognizer_client = FormRecognizerClient(
+    endpoint="https://your-endpoint.cognitiveservices.azure.com/",
+    credential=AzureKeyCredential("your-api-key")
+)
+
+# Analyze a document using deprecated method
+poller = form_recognizer_client.begin_recognize_content(document=open("sample.pdf", "rb"))
+result = poller.result()
+</example>
+
+## Reference
+- [Official Migration Guide](mdc:https:/github.com/Azure/azure-sdk-for-python/blob/main/sdk/documentintelligence/azure-ai-documentintelligence/MIGRATION_GUIDE.md)
+- [Azure Document Intelligence Documentation](mdc:https:/learn.microsoft.com/en-us/azure/ai-services/document-intelligence) 

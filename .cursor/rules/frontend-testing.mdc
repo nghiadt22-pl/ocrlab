@@ -1,6 +1,6 @@
 ---
 description: ALWAYS test frontend components after implementation to ensure functionality and prevent regressions
-globs: src/**/*.{tsx,jsx,ts,js}
+globs: src/**/*.tsx,src/**/*.jsx,src/**/*.ts,src/**/*.js
 alwaysApply: false
 ---
 # Frontend Component Testing Standards

@@ -2,13 +2,25 @@ name: Deploy Azure Functions App
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop, staging ]
     paths:
       - 'function_app/**'
   workflow_dispatch:  # Allow manual triggering
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+          - development
+          - staging
+          - production
 
 env:
-  AZURE_FUNCTIONAPP_NAME: testpl  # The name of your Azure Function App
+  AZURE_FUNCTIONAPP_NAME_DEV: 'testpl-dev'  # The name of your development Azure Function App
+  AZURE_FUNCTIONAPP_NAME_STAGING: 'testpl-staging'  # The name of your staging Azure Function App
+  AZURE_FUNCTIONAPP_NAME_PROD: 'testpl'  # The name of your production Azure Function App
   AZURE_FUNCTIONAPP_PACKAGE_PATH: './function_app'  # Path to the function app code
   PYTHON_VERSION: '3.11'  # Python version to use
 
@@ -35,11 +47,67 @@ jobs:
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+    - name: Set environment for branch
+      id: set-env
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          echo "ENVIRONMENT=${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+        elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+          echo "ENVIRONMENT=production" >> $GITHUB_ENV
+        elif [ "${{ github.ref }}" == "refs/heads/staging" ]; then
+          echo "ENVIRONMENT=staging" >> $GITHUB_ENV
+        else
+          echo "ENVIRONMENT=development" >> $GITHUB_ENV
+        fi
+        echo "Selected environment: ${{ env.ENVIRONMENT }}"
+
+        # Set the function app name based on the environment
+        if [ "${{ env.ENVIRONMENT }}" == "production" ]; then
+          echo "AZURE_FUNCTIONAPP_NAME=${{ env.AZURE_FUNCTIONAPP_NAME_PROD }}" >> $GITHUB_ENV
+        elif [ "${{ env.ENVIRONMENT }}" == "staging" ]; then
+          echo "AZURE_FUNCTIONAPP_NAME=${{ env.AZURE_FUNCTIONAPP_NAME_STAGING }}" >> $GITHUB_ENV
+        else
+          echo "AZURE_FUNCTIONAPP_NAME=${{ env.AZURE_FUNCTIONAPP_NAME_DEV }}" >> $GITHUB_ENV
+        fi
+        echo "Function App Name: ${{ env.AZURE_FUNCTIONAPP_NAME }}"
+
     - name: 'Deploy Azure Function App'
       uses: Azure/functions-action@v1
       with:
         app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
         package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-        publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+        publish-profile: ${{ env.ENVIRONMENT == 'production' && secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE || env.ENVIRONMENT == 'staging' && secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE_STAGING || secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE_DEV }}
         scm-do-build-during-deployment: true
-        enable-oryx-build: true 
+        enable-oryx-build: true
+
+    - name: 'Configure environment settings'
+      run: |
+        # Set environment-specific settings
+        az functionapp config appsettings set --name ${{ env.AZURE_FUNCTIONAPP_NAME }} --resource-group rg-${{ env.AZURE_FUNCTIONAPP_NAME }} --settings \
+          ENVIRONMENT=${{ env.ENVIRONMENT }} \
+          ENABLE_MOCK_MODE=${{ env.ENVIRONMENT != 'production' }}
+
+    - name: 'Set up monitoring and logging'
+      run: |
+        # Check if Application Insights exists
+        APPINSIGHTS_EXISTS=$(az monitor app-insights component show --app ${{ env.AZURE_FUNCTIONAPP_NAME }}-insights --resource-group rg-${{ env.AZURE_FUNCTIONAPP_NAME }} --query name -o tsv 2>/dev/null || echo "")
+        
+        if [ -z "$APPINSIGHTS_EXISTS" ]; then
+          echo "Creating Application Insights for ${{ env.AZURE_FUNCTIONAPP_NAME }}"
+          az monitor app-insights component create --app ${{ env.AZURE_FUNCTIONAPP_NAME }}-insights --resource-group rg-${{ env.AZURE_FUNCTIONAPP_NAME }} --location eastus
+          
+          # Get the instrumentation key
+          INSTRUMENTATION_KEY=$(az monitor app-insights component show --app ${{ env.AZURE_FUNCTIONAPP_NAME }}-insights --resource-group rg-${{ env.AZURE_FUNCTIONAPP_NAME }} --query instrumentationKey -o tsv)
+          
+          # Configure Function App with Application Insights
+          az functionapp config appsettings set --name ${{ env.AZURE_FUNCTIONAPP_NAME }} --resource-group rg-${{ env.AZURE_FUNCTIONAPP_NAME }} --settings \
+            APPINSIGHTS_INSTRUMENTATIONKEY=$INSTRUMENTATION_KEY
+        else
+          echo "Application Insights for ${{ env.AZURE_FUNCTIONAPP_NAME }} already exists"
+        fi
+
+    - name: 'Run tests against deployed function'
+      run: |
+        echo "Running tests against deployed function app: https://${{ env.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net"
+        # Add test commands here
+        # Example: python -m pytest tests/integration_tests.py --url https://${{ env.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net 

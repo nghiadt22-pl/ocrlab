@@ -1,4 +1,4 @@
-Below is a recommended backend structure for OCR Lab, highlighting how to organize core components like the database, authentication, and storage. This framework ensures that developers and system administrators understand each service’s role and how to integrate them for a smooth end-to-end workflow.
+Below is a recommended backend structure for OCR Lab, highlighting how to organize core components like the database, authentication, and storage. This framework ensures that developers and system administrators understand each service's role and how to integrate them for a smooth end-to-end workflow.
 
 ---
 
@@ -63,13 +63,13 @@ backend/
 
 ## 3. Database Setup (Postgres)
 
-Postgres handles user data, file metadata, and usage tracking. It may also store subscription or billing records if Clerk’s default data is insufficient.
+Postgres handles user data, file metadata, and usage tracking. It may also store subscription or billing records if Clerk's default data is insufficient.
 
 ### 3.1 Tables and Schemas
 
 Common tables include:
 
-- **`users`**: If relying partially on local user data rather than Clerk exclusively, store the user’s ID, email, plan type, etc.  
+- **`users`**: If relying partially on local user data rather than Clerk exclusively, store the user's ID, email, plan type, etc.  
 - **`folders`**: Contains folder names, IDs, and references to the owning user.  
 - **`files`**: Stores file name, folder ID, status (`queued`, `processing`, `complete`), file size, timestamps, etc.  
 - **`usage`**: Logs pages processed, queries made, possibly referencing `users` table for usage-based billing.  
@@ -96,7 +96,7 @@ Include connection logic in `db/database.py` (Python) or a dedicated Node servic
 1. **Middleware**  that checks the incoming request headers for a valid authentication token.  
 2. **API Key** approach (optional) if you allow external integrations to query the system programmatically.  
 
-Ensure each protected endpoint checks the user’s identity (or API key) and confirms they have permissions to access or manipulate a given file or folder. You can store user claims or minimal user metadata in Postgres if your logic requires cross-referencing usage or folder ownership.
+Ensure each protected endpoint checks the user's identity (or API key) and confirms they have permissions to access or manipulate a given file or folder. You can store user claims or minimal user metadata in Postgres if your logic requires cross-referencing usage or folder ownership.
 
 ---
 
@@ -112,8 +112,8 @@ Ensure each protected endpoint checks the user’s identity (or API key) and con
    - A separate OCR service (Azure Function or a background worker) polls or triggers on queue messages and performs extraction via Azure Document Intelligence.  
 
 3. **Azure Document Intelligence**  
-   - The OCR microservice calls the Form Recognizer APIs, retrieving text, tables, images, and handwriting.  
-   - On completion, the service updates the `files` table in Postgres to mark the status as “Complete” and inserts text chunks into the vector DB (Azure AI Search).
+   - The OCR microservice calls the Azure Document Intelligence APIs, retrieving text, tables, images, and handwriting.  
+   - On completion, the service updates the `files` table in Postgres to mark the status as "Complete" and inserts text chunks into the vector DB (Azure AI Search).
 
 4. **Azure AI Search** (Vector DB)  
    - Stores embeddings and chunked text from each processed document.  
@@ -127,7 +127,7 @@ Once a document is processed or a search query is made, the backend records usag
 - **Pages processed**: Summed based on what Azure Document Intelligence reports.  
 - **Queries made**: Increment each time a user calls the search endpoint.
 
-If there is a free tier limit, the system checks each user’s usage count before allowing additional requests. Pay-as-you-go or subscription-based tiers can be integrated by referencing the user’s plan type stored in the database or in Clerk’s custom attributes.
+If there is a free tier limit, the system checks each user's usage count before allowing additional requests. Pay-as-you-go or subscription-based tiers can be integrated by referencing the user's plan type stored in the database or in Clerk's custom attributes.
 
 ---
 

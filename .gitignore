@@ -37,3 +37,5 @@ function_app/local.settings.json
 xnotes/
 docs/
 .vercel
+
+*.pyc

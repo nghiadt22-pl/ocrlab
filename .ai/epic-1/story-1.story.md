@@ -42,7 +42,7 @@ Story Points: 5
    1. - [x] Set up Azure Functions project
    2. - [x] Configure Azure Blob Storage
    3. - [x] Configure Azure AI Search
-   4. - [x] Set up Azure Document Intelligence (Form Recognizer)
+   4. - [x] Set up Azure Document Intelligence
       1. - [x] Create resource in Azure portal
       2. - [x] Configure API keys and endpoints
       3. - [x] Test basic document analysis
@@ -199,7 +199,7 @@ backend/
 - Set up Azure Functions project
 - Configure Azure Blob Storage
 - Configure Azure AI Search
-- Set up Azure Document Intelligence (Form Recognizer)
+- Set up Azure Document Intelligence
 - Provision Azure PostgreSQL database
 - Create database schema
 - Set up database connection in backend

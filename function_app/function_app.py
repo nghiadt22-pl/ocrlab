@@ -568,6 +568,7 @@ def process_ocr_queue(msg: func.QueueMessage) -> None:
         if connection_string == "mock":
             logger.info(f"Mock: Downloaded file {filename} from blob storage")
             logger.info(f"Mock: Processed file {filename} with OCR")
+            logger.info(f"Mock: Generated embeddings and stored in vector database")
             logger.info(f"Mock: Updated file {filename} status to 'completed'")
             logger.info(f"Mock: OCR processing completed for job: {message_body}")
             return
@@ -589,14 +590,65 @@ def process_ocr_queue(msg: func.QueueMessage) -> None:
             
             logger.info(f"Downloaded file {filename} from blob storage")
             
-            # TODO: Process with Azure Document Intelligence
-            # 1. Send to Azure Document Intelligence
-            # 2. Extract text, tables, and other content
-            # 3. Generate embeddings
-            # 4. Store in vector database
+            # Process with Azure Document Intelligence
+            from services.document_intelligence import create_document_analyzer
+            from services.document_intelligence import create_summary_generator
+            from services.vector_search import create_text_chunker, create_embeddings_generator, create_vector_database
+            import io
             
-            # For now, we'll just log that we processed the file
-            logger.info(f"Processed file {filename} with OCR")
+            # Create a document analyzer
+            document_analyzer = create_document_analyzer()
+            
+            # Create a file-like object from the downloaded bytes
+            file_obj = io.BytesIO(file_contents)
+            file_obj.name = filename  # Set the filename
+            
+            # Analyze the document
+            logger.info(f"Analyzing document {filename} with Azure Document Intelligence")
+            analysis_result = document_analyzer.analyze_document(
+                document=file_obj,
+                extract_text=True,
+                extract_tables=True,
+                extract_images=True,
+                extract_handwriting=True,
+                generate_summary=True
+            )
+            
+            # Log the extraction results
+            logger.info(f"Document analysis completed for {filename}")
+            logger.info(f"Extracted {len(analysis_result.get('paragraphs', []))} paragraphs")
+            logger.info(f"Extracted {len(analysis_result.get('tables', []))} tables")
+            logger.info(f"Extracted {len(analysis_result.get('images', []))} images")
+            logger.info(f"Extracted {len(analysis_result.get('handwritten_items', []))} handwritten items")
+            
+            # Generate summary if not already included in the analysis result
+            if 'summary' not in analysis_result:
+                logger.info(f"Generating summary for {filename}")
+                summary_generator = create_summary_generator(max_summary_length=5)
+                summary_result = summary_generator.generate_summary(analysis_result)
+                analysis_result['summary'] = summary_result['summary']
+                analysis_result['keywords'] = summary_result['keywords']
+            
+            # Chunk the document for vector storage
+            logger.info(f"Chunking document {filename} for vector storage")
+            text_chunker = create_text_chunker(chunk_size=1000, chunk_overlap=200)
+            document_chunks = text_chunker.chunk_document(analysis_result)
+            logger.info(f"Created {len(document_chunks)} chunks from document")
+            
+            # Generate embeddings for chunks
+            logger.info(f"Generating embeddings for document chunks")
+            embeddings_generator = create_embeddings_generator()
+            chunks_with_embeddings = embeddings_generator.generate_embeddings(document_chunks)
+            
+            # Store document chunks in vector database
+            logger.info(f"Storing document chunks in vector database")
+            vector_db = create_vector_database()
+            success = vector_db.store_document_chunks(file_id, user_id, chunks_with_embeddings)
+            
+            if success:
+                logger.info(f"Successfully stored {len(chunks_with_embeddings)} document chunks in vector database")
+            else:
+                logger.warning(f"Failed to store document chunks in vector database")
             
             # TODO: Update file status in database
             # For now, we'll just log that we updated the status
@@ -712,3 +764,96 @@ def index_document(req: func.HttpRequest) -> func.HttpResponse:
     except Exception as e:
         logger.error(f"Error indexing document: {str(e)}")
         return create_error_response(500, f"Failed to index document: {str(e)}")
+
+# Document Processing Status Function
+@app.route(route="processing-status/{file_id}", auth_level=func.AuthLevel.ANONYMOUS)
+def processing_status(req: func.HttpRequest) -> func.HttpResponse:
+    """Get the processing status of a document."""
+    try:
+        # Check for auth token
+        user_id = get_user_id(req)
+        if not user_id:
+            return create_error_response(401, "Unauthorized - Invalid or missing auth token")
+
+        # Get file ID from route parameters
+        file_id = req.route_params.get('file_id')
+        if not file_id:
+            return create_error_response(400, "Missing file ID in route parameters")
+        
+        logger.info(f"Getting processing status for file {file_id}")
+        
+        # Get connection string from environment variable
+        connection_string = os.environ.get('AzureWebJobsStorage')
+        if not connection_string:
+            return create_error_response(500, "Server configuration error")
+        
+        # Handle mock mode for testing
+        if connection_string == "mock":
+            # Return mock processing status
+            response = {
+                "file_id": file_id,
+                "user_id": user_id,
+                "status": "completed",
+                "processing_time": 3.5,  # seconds
+                "extracted_content": {
+                    "paragraphs": 15,
+                    "tables": 2,
+                    "images": 3,
+                    "handwritten_items": 1
+                },
+                "summary": "This is a mock document summary. It contains information about various topics and includes tables and images.",
+                "keywords": ["mock", "document", "summary", "tables", "images"]
+            }
+            return func.HttpResponse(
+                json.dumps(response),
+                mimetype="application/json",
+                status_code=200
+            )
+        
+        # For a real implementation, query database for processing status
+        # TODO: Query database for processing status
+        
+        # For now, we'll return a default "completed" status
+        # This would be replaced with actual database lookup in a real implementation
+        response = {
+            "file_id": file_id,
+            "user_id": user_id,
+            "status": "completed",
+            "processing_time": 5.0,  # seconds
+            "extracted_content": {
+                "paragraphs": 0,
+                "tables": 0,
+                "images": 0,
+                "handwritten_items": 0
+            }
+        }
+        
+        # Try to fetch document summary from vector database
+        try:
+            from services.vector_search import create_vector_database
+            
+            vector_db = create_vector_database()
+            results = vector_db.search_documents("*", user_id, limit=1, filters={"file_id": file_id})
+            
+            if results and len(results) > 0:
+                # Update status with actual content counts and summary if available
+                if "document_type" in results[0]:
+                    response["document_type"] = results[0]["document_type"]
+                if "language" in results[0]:
+                    response["language"] = results[0]["language"]
+                if "summary" in results[0]:
+                    response["summary"] = results[0]["summary"]
+                if "keywords" in results[0]:
+                    response["keywords"] = results[0]["keywords"]
+                response["status"] = "completed"
+        except Exception as e:
+            logger.warning(f"Error retrieving document summary from vector database: {str(e)}")
+        
+        return func.HttpResponse(
+            json.dumps(response),
+            mimetype="application/json",
+            status_code=200
+        )
+    except Exception as e:
+        logger.error(f"Error getting processing status: {str(e)}")
+        return create_error_response(500, f"Error getting processing status: {str(e)}")

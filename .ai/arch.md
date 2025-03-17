@@ -1,6 +1,6 @@
 # OCR LAB - Architecture Document
 
-**Status: Draft** (Pending Approval)
+**Status: Approved**
 
 ## Overview
 

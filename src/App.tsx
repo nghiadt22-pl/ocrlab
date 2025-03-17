@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Routes, Route } from "react-router-dom";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { PublicRoute } from "@/components/auth/PublicRoute";
+import { Layout } from "@/components/layout";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import SignInPage from "./pages/SignIn";
@@ -38,12 +39,14 @@ const App = () => (
         } 
       />
       
-      {/* Protected routes */}
+      {/* Protected routes with Layout */}
       <Route 
         path="/dashboard" 
         element={
           <ProtectedRoute>
-            <Dashboard />
+            <Layout>
+              <Dashboard />
+            </Layout>
           </ProtectedRoute>
         } 
       />
@@ -51,7 +54,9 @@ const App = () => (
         path="/folders" 
         element={
           <ProtectedRoute>
-            <Folders />
+            <Layout>
+              <Folders />
+            </Layout>
           </ProtectedRoute>
         } 
       />
@@ -59,7 +64,9 @@ const App = () => (
         path="/folders/:folderId" 
         element={
           <ProtectedRoute>
-            <FolderFiles />
+            <Layout>
+              <FolderFiles />
+            </Layout>
           </ProtectedRoute>
         } 
       />
@@ -67,7 +74,9 @@ const App = () => (
         path="/search" 
         element={
           <ProtectedRoute>
-            <Search />
+            <Layout>
+              <Search />
+            </Layout>
           </ProtectedRoute>
         } 
       />
@@ -75,7 +84,22 @@ const App = () => (
         path="/billing" 
         element={
           <ProtectedRoute>
-            <Billing />
+            <Layout>
+              <Billing />
+            </Layout>
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/preferences" 
+        element={
+          <ProtectedRoute>
+            <Layout>
+              <div className="space-y-6">
+                <h2 className="text-2xl font-bold">Preferences</h2>
+                <p className="text-muted-foreground">This page is under construction.</p>
+              </div>
+            </Layout>
           </ProtectedRoute>
         } 
       />

@@ -1,236 +1,200 @@
 import React, { useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { FolderIcon, FolderPlusIcon, MoreHorizontalIcon, FileIcon, TrashIcon, PencilIcon } from 'lucide-react';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import Header from '@/components/Header';
-import { toast } from 'sonner';
 import { Link } from 'react-router-dom';
+import { 
+  FolderIcon, 
+  PlusIcon, 
+  SearchIcon, 
+  MoreHorizontal, 
+  FolderPlusIcon,
+  Trash2,
+  Edit,
+  Share
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardFooter } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuSeparator, 
+  DropdownMenuTrigger 
+} from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 
 // Mock data for folders
 const mockFolders = [
-  {
-    id: '1',
-    name: 'Home',
-    documentCount: 5,
-    createdAt: new Date('2023-01-15'),
-  },
-  {
-    id: '2',
-    name: 'Financial Reports',
-    documentCount: 12,
-    createdAt: new Date('2023-02-20'),
-  },
-  {
-    id: '3',
-    name: 'Contracts',
-    documentCount: 8,
-    createdAt: new Date('2023-03-10'),
-  },
-  {
-    id: '4',
-    name: 'Meeting Notes',
-    documentCount: 3,
-    createdAt: new Date('2023-04-05'),
-  },
+  { id: 1, name: 'Finance', files: 12, lastUpdated: '2023-12-15' },
+  { id: 2, name: 'Contracts', files: 8, lastUpdated: '2023-12-10' },
+  { id: 3, name: 'Invoices', files: 24, lastUpdated: '2023-12-05' },
+  { id: 4, name: 'Reports', files: 6, lastUpdated: '2023-12-01' },
+  { id: 5, name: 'HR Documents', files: 15, lastUpdated: '2023-11-28' },
+  { id: 6, name: 'Marketing', files: 9, lastUpdated: '2023-11-25' },
 ];
 
 const Folders: React.FC = () => {
-  const [folders, setFolders] = useState(mockFolders);
+  const [searchQuery, setSearchQuery] = useState('');
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
-  const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
-  const [folderToRename, setFolderToRename] = useState<{ id: string, name: string } | null>(null);
-  const [renameFolderName, setRenameFolderName] = useState('');
-
-  const handleCreateFolder = () => {
-    if (!newFolderName.trim()) {
-      toast.error('Folder name cannot be empty');
-      return;
+  
+  // Filter folders based on search query
+  const filteredFolders = mockFolders.filter(folder => 
+    folder.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+  
+  // Handle folder creation
+  const handleCreateFolder = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newFolderName.trim()) {
+      // In a real app, this would call an API to create the folder
+      console.log('Creating folder:', newFolderName);
+      setNewFolderName('');
+      setIsCreateDialogOpen(false);
     }
-
-    const newFolder = {
-      id: Date.now().toString(),
-      name: newFolderName,
-      documentCount: 0,
-      createdAt: new Date(),
-    };
-
-    setFolders([...folders, newFolder]);
-    setNewFolderName('');
-    setIsCreateDialogOpen(false);
-    toast.success(`Folder "${newFolderName}" created successfully`);
-  };
-
-  const handleDeleteFolder = (folderId: string, folderName: string) => {
-    setFolders(folders.filter(folder => folder.id !== folderId));
-    toast.success(`Folder "${folderName}" deleted successfully`);
-  };
-
-  const openRenameDialog = (folder: { id: string, name: string }) => {
-    setFolderToRename(folder);
-    setRenameFolderName(folder.name);
-    setIsRenameDialogOpen(true);
-  };
-
-  const handleRenameFolder = () => {
-    if (!renameFolderName.trim() || !folderToRename) {
-      toast.error('Folder name cannot be empty');
-      return;
-    }
-
-    setFolders(folders.map(folder => 
-      folder.id === folderToRename.id 
-        ? { ...folder, name: renameFolderName } 
-        : folder
-    ));
-    
-    toast.success(`Folder renamed to "${renameFolderName}" successfully`);
-    setIsRenameDialogOpen(false);
-    setFolderToRename(null);
-  };
-
-  const formatDate = (date: Date) => {
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
-      <main className="container mx-auto px-4 py-24">
-        <div className="flex justify-between items-center mb-8">
-          <div>
-            <h1 className="text-3xl font-bold mb-2">Folders</h1>
-            <p className="text-muted-foreground">
-              Organize your documents into folders for easy access
-            </p>
+    <div className="space-y-8">
+      {/* Header section */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <h2 className="text-3xl font-bold tracking-tight">Folders</h2>
+          <p className="text-muted-foreground">Organize and manage your document folders</p>
+        </div>
+        
+        <div className="flex items-center gap-2">
+          <div className="relative w-full md:w-64">
+            <SearchIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input 
+              placeholder="Search folders..." 
+              className="pl-10"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
           </div>
+          
           <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="flex items-center gap-2">
-                <FolderPlusIcon className="h-4 w-4" />
-                Create Folder
+              <Button>
+                <PlusIcon className="h-4 w-4 mr-2" />
+                New Folder
               </Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Create New Folder</DialogTitle>
                 <DialogDescription>
-                  Enter a name for your new folder
+                  Enter a name for your new folder to organize your documents.
                 </DialogDescription>
               </DialogHeader>
-              <div className="py-4">
-                <Label htmlFor="folderName">Folder Name</Label>
-                <Input 
-                  id="folderName" 
-                  value={newFolderName} 
-                  onChange={(e) => setNewFolderName(e.target.value)}
-                  placeholder="e.g., Financial Reports"
-                  className="mt-2"
-                />
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleCreateFolder}>
-                  Create Folder
-                </Button>
-              </DialogFooter>
+              <form onSubmit={handleCreateFolder}>
+                <div className="grid gap-4 py-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="name">Folder Name</Label>
+                    <Input 
+                      id="name" 
+                      placeholder="Enter folder name" 
+                      value={newFolderName}
+                      onChange={(e) => setNewFolderName(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit">Create Folder</Button>
+                </DialogFooter>
+              </form>
             </DialogContent>
           </Dialog>
         </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {folders.map((folder) => (
-            <Card key={folder.id} className="overflow-hidden">
-              <CardHeader className="pb-3">
-                <div className="flex justify-between items-start">
-                  <div className="flex items-center gap-2">
-                    <div className="bg-primary/10 p-2 rounded-lg">
-                      <FolderIcon className="h-5 w-5 text-primary" />
+      </div>
+      
+      {/* Folders grid */}
+      {filteredFolders.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredFolders.map((folder) => (
+            <Card key={folder.id} className="overflow-hidden card-hover">
+              <Link to={`/folders/${folder.id}`} className="block h-full">
+                <CardContent className="p-6">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center space-x-4">
+                      <div className="bg-primary/10 p-3 rounded-lg">
+                        <FolderIcon className="h-6 w-6 text-primary" />
+                      </div>
+                      <div>
+                        <h3 className="font-medium text-lg">{folder.name}</h3>
+                        <p className="text-sm text-muted-foreground">
+                          {folder.files} {folder.files === 1 ? 'file' : 'files'}
+                        </p>
+                      </div>
                     </div>
-                    <CardTitle className="text-lg">{folder.name}</CardTitle>
+                    
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild onClick={(e) => e.preventDefault()}>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem className="cursor-pointer">
+                          <Edit className="h-4 w-4 mr-2" />
+                          Rename
+                        </DropdownMenuItem>
+                        <DropdownMenuItem className="cursor-pointer">
+                          <Share className="h-4 w-4 mr-2" />
+                          Share
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem className="cursor-pointer text-destructive">
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <MoreHorizontalIcon className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem 
-                        className="flex items-center gap-2 cursor-pointer"
-                        onClick={() => openRenameDialog({ id: folder.id, name: folder.name })}
-                      >
-                        <PencilIcon className="h-4 w-4" />
-                        Rename
-                      </DropdownMenuItem>
-                      <DropdownMenuItem 
-                        className="flex items-center gap-2 text-destructive cursor-pointer"
-                        onClick={() => handleDeleteFolder(folder.id, folder.name)}
-                      >
-                        <TrashIcon className="h-4 w-4" />
-                        Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-                <CardDescription>
-                  Created on {formatDate(folder.createdAt)}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="pb-3">
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <FileIcon className="h-4 w-4" />
-                  <span>{folder.documentCount} document{folder.documentCount !== 1 ? 's' : ''}</span>
-                </div>
-              </CardContent>
-              <CardFooter className="pt-0">
-                <Button variant="outline" className="w-full" asChild>
-                  <Link to={`/folders/${folder.id}`}>Open Folder</Link>
-                </Button>
-              </CardFooter>
+                </CardContent>
+                <CardFooter className="p-4 pt-0 border-t bg-muted/30">
+                  <p className="text-xs text-muted-foreground">
+                    Last updated on {folder.lastUpdated}
+                  </p>
+                </CardFooter>
+              </Link>
             </Card>
           ))}
         </div>
-
-        {/* Rename Folder Dialog */}
-        <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Rename Folder</DialogTitle>
-              <DialogDescription>
-                Enter a new name for "{folderToRename?.name}"
-              </DialogDescription>
-            </DialogHeader>
-            <div className="py-4">
-              <Label htmlFor="renameFolderName">New Folder Name</Label>
-              <Input 
-                id="renameFolderName" 
-                value={renameFolderName} 
-                onChange={(e) => setRenameFolderName(e.target.value)}
-                className="mt-2"
-              />
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsRenameDialogOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleRenameFolder}>
-                Rename Folder
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </main>
+      ) : (
+        <div className="flex flex-col items-center justify-center py-12 space-y-4">
+          <div className="bg-muted p-4 rounded-full">
+            <FolderPlusIcon className="h-8 w-8 text-muted-foreground" />
+          </div>
+          <h3 className="text-xl font-medium">No folders found</h3>
+          {searchQuery ? (
+            <p className="text-muted-foreground text-center max-w-md">
+              No folders match your search query. Try a different search or create a new folder.
+            </p>
+          ) : (
+            <p className="text-muted-foreground text-center max-w-md">
+              You haven't created any folders yet. Create a folder to start organizing your documents.
+            </p>
+          )}
+          <Button onClick={() => setIsCreateDialogOpen(true)}>
+            <PlusIcon className="h-4 w-4 mr-2" />
+            Create Folder
+          </Button>
+        </div>
+      )}
     </div>
   );
 };

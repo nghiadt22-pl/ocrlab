@@ -1,6 +1,6 @@
 ---
 description: ALWAYS run tests before updating progress documentation to ensure quality and prevent regressions
-globs: **/*.{ts,tsx,js,jsx,py}
+globs: src/**/*.jsx,src/**/*.tsx,src/**/*.js,src/**/*.ts,**/*.py
 alwaysApply: false
 ---
 # Testing Workflow Standards

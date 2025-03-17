@@ -62,8 +62,8 @@ The back-end is composed of Python microservices and Azure Functions. These serv
      - [Azure Blob Storage Docs](https://learn.microsoft.com/azure/storage/blobs/)
    - `azure-storage-queue`: For sending/receiving messages to the processing queue.  
      - [Azure Queue Storage Docs](https://learn.microsoft.com/azure/storage/queues/)
-   - `azure-ai-formrecognizer`: For advanced OCR through Azure Document Intelligence (previously "Form Recognizer").  
-     - [Azure Form Recognizer (Document Intelligence) Docs](https://learn.microsoft.com/azure/ai-services/document-intelligence/)
+   - `azure-ai-documentintelligence`: For advanced OCR through Azure Document Intelligence.
+   - [Azure Document Intelligence Docs](https://learn.microsoft.com/azure/ai-services/document-intelligence/)
 2. **Database Libraries**:
    - `psycopg2` or `asyncpg`: For connecting to Postgres.
    - [PostgreSQL Docs](https://www.postgresql.org/docs/)
@@ -82,7 +82,7 @@ python -m venv venv
 source venv/bin/activate  # or venv\Scripts\activate on Windows
 
 # Install Azure libraries
-pip install azure-storage-blob azure-storage-queue azure-ai-formrecognizer azure-search-documents
+pip install azure-storage-blob azure-storage-queue azure-ai-documentintelligence azure-search-documents
 
 # Install database libraries
 pip install psycopg2
@@ -111,8 +111,8 @@ pip install azure-functions
 2. **Azure Queue** is used for asynchronous message passing between the front-end's upload notifications and the OCR processing microservice.  
    - [Azure Queue Storage Setup](https://learn.microsoft.com/azure/storage/queues/)
 
-3. **Azure Document Intelligence (Form Recognizer)** is called by the Python service to extract text, tables, images, and handwriting from PDFs.  
-   - [Getting Started with Form Recognizer](https://learn.microsoft.com/azure/ai-services/document-intelligence/get-started-form-recognizer?tabs=studio)
+3. **Azure Document Intelligence** is called by the Python service to extract text, tables, images, and handwriting from PDFs.
+- [Getting Started with Azure Document Intelligence](https://learn.microsoft.com/azure/ai-services/document-intelligence/get-started-sdks-rest-api?view=doc-intel-4.0.0)
 
 4. **Azure Cognitive Search (Vector Mode)** or **Azure AI Search** is used to store embeddings for semantic search and retrieval.  
    - [Azure Cognitive Search Docs](https://learn.microsoft.com/azure/search/)

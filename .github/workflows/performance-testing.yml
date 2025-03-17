@@ -1,0 +1,309 @@
+name: Performance Testing
+
+on:
+  push:
+    branches: [ main, staging ]
+  schedule:
+    - cron: '0 0 * * 1'  # Run weekly on Monday at midnight
+  workflow_dispatch:  # Allow manual triggering
+    inputs:
+      environment:
+        description: 'Environment to test'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+
+env:
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.11'
+  FRONTEND_URL_DEV: 'https://ocr-lab-dev.vercel.app'
+  FRONTEND_URL_STAGING: 'https://ocr-lab-staging.vercel.app'
+  FRONTEND_URL_PROD: 'https://ocr-lab.vercel.app'
+  API_URL_DEV: 'https://testpl-dev.azurewebsites.net/api'
+  API_URL_STAGING: 'https://testpl-staging.azurewebsites.net/api'
+  API_URL_PROD: 'https://testpl.azurewebsites.net/api'
+
+jobs:
+  frontend-performance:
+    name: Frontend Performance Testing
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm install -g lighthouse lighthouse-ci
+
+      - name: Set environment variables
+        id: set-env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "ENVIRONMENT=${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "ENVIRONMENT=production" >> $GITHUB_ENV
+          else
+            echo "ENVIRONMENT=staging" >> $GITHUB_ENV
+          fi
+          echo "Selected environment: ${{ env.ENVIRONMENT }}"
+
+          # Set the frontend URL based on the environment
+          if [ "${{ env.ENVIRONMENT }}" == "production" ]; then
+            echo "FRONTEND_URL=${{ env.FRONTEND_URL_PROD }}" >> $GITHUB_ENV
+          elif [ "${{ env.ENVIRONMENT }}" == "staging" ]; then
+            echo "FRONTEND_URL=${{ env.FRONTEND_URL_STAGING }}" >> $GITHUB_ENV
+          else
+            echo "FRONTEND_URL=${{ env.FRONTEND_URL_DEV }}" >> $GITHUB_ENV
+          fi
+          echo "Frontend URL: ${{ env.FRONTEND_URL }}"
+
+      - name: Run Lighthouse CI
+        run: |
+          # Create a Lighthouse CI configuration file
+          cat > lighthouserc.json << EOF
+          {
+            "ci": {
+              "collect": {
+                "url": ["${{ env.FRONTEND_URL }}", "${{ env.FRONTEND_URL }}/dashboard", "${{ env.FRONTEND_URL }}/search"],
+                "numberOfRuns": 3,
+                "settings": {
+                  "preset": "desktop"
+                }
+              },
+              "assert": {
+                "assertions": {
+                  "categories:performance": ["error", {"minScore": 0.8}],
+                  "categories:accessibility": ["error", {"minScore": 0.9}],
+                  "categories:best-practices": ["error", {"minScore": 0.9}],
+                  "categories:seo": ["error", {"minScore": 0.9}],
+                  "first-contentful-paint": ["error", {"maxNumericValue": 2000}],
+                  "interactive": ["error", {"maxNumericValue": 3500}],
+                  "largest-contentful-paint": ["error", {"maxNumericValue": 2500}]
+                }
+              },
+              "upload": {
+                "target": "temporary-public-storage"
+              }
+            }
+          }
+          EOF
+
+          # Run Lighthouse CI
+          lhci autorun || true
+
+      - name: Upload Lighthouse results
+        uses: actions/upload-artifact@v3
+        with:
+          name: lighthouse-results
+          path: .lighthouseci/
+          retention-days: 30
+
+  api-performance:
+    name: API Performance Testing
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install locust matplotlib
+
+      - name: Set environment variables
+        id: set-env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "ENVIRONMENT=${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "ENVIRONMENT=production" >> $GITHUB_ENV
+          else
+            echo "ENVIRONMENT=staging" >> $GITHUB_ENV
+          fi
+          echo "Selected environment: ${{ env.ENVIRONMENT }}"
+
+          # Set the API URL based on the environment
+          if [ "${{ env.ENVIRONMENT }}" == "production" ]; then
+            echo "API_URL=${{ env.API_URL_PROD }}" >> $GITHUB_ENV
+          elif [ "${{ env.ENVIRONMENT }}" == "staging" ]; then
+            echo "API_URL=${{ env.API_URL_STAGING }}" >> $GITHUB_ENV
+          else
+            echo "API_URL=${{ env.API_URL_DEV }}" >> $GITHUB_ENV
+          fi
+          echo "API URL: ${{ env.API_URL }}"
+
+      - name: Create Locust test file
+        run: |
+          cat > locustfile.py << EOF
+          from locust import HttpUser, task, between
+          import json
+          import random
+
+          class APIUser(HttpUser):
+              wait_time = between(1, 3)
+              host = "${{ env.API_URL }}"
+
+              @task(3)
+              def get_documents(self):
+                  self.client.get("/documents")
+
+              @task(2)
+              def search_documents(self):
+                  query = random.choice(["invoice", "receipt", "contract", "report"])
+                  self.client.get(f"/search?q={query}")
+
+              @task(1)
+              def get_document_by_id(self):
+                  # Assuming document IDs are UUIDs or numeric IDs
+                  doc_id = f"doc-{random.randint(1, 100)}"
+                  self.client.get(f"/documents/{doc_id}")
+          EOF
+
+      - name: Run Locust tests
+        run: |
+          # Run Locust in headless mode
+          locust --headless -f locustfile.py --users 50 --spawn-rate 10 --run-time 5m --csv=locust-results
+
+      - name: Generate performance report
+        run: |
+          # Create a Python script to generate a performance report
+          cat > generate_report.py << EOF
+          import pandas as pd
+          import matplotlib.pyplot as plt
+          import os
+
+          # Load the Locust results
+          stats = pd.read_csv('locust-results_stats.csv')
+          requests = pd.read_csv('locust-results_stats_history.csv')
+
+          # Create output directory
+          os.makedirs('performance-report', exist_ok=True)
+
+          # Generate summary statistics
+          with open('performance-report/summary.md', 'w') as f:
+              f.write('# API Performance Test Results\n\n')
+              f.write(f'## Environment: ${{ env.ENVIRONMENT }}\n\n')
+              f.write(f'## API URL: ${{ env.API_URL }}\n\n')
+              f.write('## Summary Statistics\n\n')
+              f.write('| Endpoint | Requests | Failures | Median Response Time (ms) | 95% Response Time (ms) |\n')
+              f.write('|----------|----------|----------|---------------------------|-------------------------|\n')
+              
+              for _, row in stats.iterrows():
+                  f.write(f"| {row['Name']} | {row['# requests']} | {row['# failures']} | {row['Median response time']} | {row['95%']} |\n")
+
+          # Generate response time graph
+          plt.figure(figsize=(10, 6))
+          for name in requests['Name'].unique():
+              if name != 'Aggregated':
+                  df = requests[requests['Name'] == name]
+                  plt.plot(df['Timestamp'], df['Median response time'], label=name)
+          
+          plt.title('Median Response Time Over Time')
+          plt.xlabel('Time')
+          plt.ylabel('Response Time (ms)')
+          plt.legend()
+          plt.grid(True)
+          plt.savefig('performance-report/response_times.png')
+
+          # Generate requests per second graph
+          plt.figure(figsize=(10, 6))
+          for name in requests['Name'].unique():
+              if name != 'Aggregated':
+                  df = requests[requests['Name'] == name]
+                  plt.plot(df['Timestamp'], df['Requests/s'], label=name)
+          
+          plt.title('Requests Per Second Over Time')
+          plt.xlabel('Time')
+          plt.ylabel('Requests/s')
+          plt.legend()
+          plt.grid(True)
+          plt.savefig('performance-report/requests_per_second.png')
+          EOF
+
+          # Run the report generation script
+          python generate_report.py
+
+      - name: Upload performance test results
+        uses: actions/upload-artifact@v3
+        with:
+          name: api-performance-results
+          path: |
+            locust-results*.csv
+            performance-report/
+          retention-days: 30
+
+  performance-report:
+    name: Generate Performance Report
+    needs: [frontend-performance, api-performance]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Download Lighthouse results
+        uses: actions/download-artifact@v3
+        with:
+          name: lighthouse-results
+          path: lighthouse-results
+        continue-on-error: true
+
+      - name: Download API performance results
+        uses: actions/download-artifact@v3
+        with:
+          name: api-performance-results
+          path: api-performance-results
+        continue-on-error: true
+
+      - name: Generate combined performance report
+        run: |
+          echo "# Performance Test Report" > performance-report.md
+          echo "## Test Date: $(date)" >> performance-report.md
+          echo "## Repository: ${{ github.repository }}" >> performance-report.md
+          echo "## Branch: ${{ github.ref }}" >> performance-report.md
+          echo "" >> performance-report.md
+          
+          echo "## Frontend Performance (Lighthouse)" >> performance-report.md
+          echo "Status: ${{ needs.frontend-performance.result }}" >> performance-report.md
+          echo "" >> performance-report.md
+          echo "See the Lighthouse results artifact for detailed reports." >> performance-report.md
+          echo "" >> performance-report.md
+          
+          echo "## API Performance" >> performance-report.md
+          echo "Status: ${{ needs.api-performance.result }}" >> performance-report.md
+          echo "" >> performance-report.md
+          
+          if [ -f "api-performance-results/performance-report/summary.md" ]; then
+            cat api-performance-results/performance-report/summary.md >> performance-report.md
+          else
+            echo "API performance test results not available." >> performance-report.md
+          fi
+          
+          echo "" >> performance-report.md
+          echo "## Recommendations" >> performance-report.md
+          echo "1. Review any performance regressions" >> performance-report.md
+          echo "2. Optimize slow API endpoints" >> performance-report.md
+          echo "3. Improve frontend loading times if below thresholds" >> performance-report.md
+
+      - name: Upload combined performance report
+        uses: actions/upload-artifact@v3
+        with:
+          name: performance-report
+          path: performance-report.md
+          retention-days: 30 

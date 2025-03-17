@@ -1,0 +1,222 @@
+name: Frontend CI/CD
+
+on:
+  push:
+    branches: [ main, develop, staging ]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'package.json'
+      - 'vite.config.ts'
+      - 'tailwind.config.ts'
+      - '.github/workflows/frontend-ci-cd.yml'
+  pull_request:
+    branches: [ main, develop, staging ]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'package.json'
+      - 'vite.config.ts'
+      - 'tailwind.config.ts'
+  workflow_dispatch:  # Allow manual triggering
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  test:
+    name: Test Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linting
+        run: npm run lint
+
+      - name: Run tests
+        run: npm test
+
+  build:
+    name: Build Frontend
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set environment for branch
+        id: set-env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "ENVIRONMENT=${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "ENVIRONMENT=production" >> $GITHUB_ENV
+          elif [ "${{ github.ref }}" == "refs/heads/staging" ]; then
+            echo "ENVIRONMENT=staging" >> $GITHUB_ENV
+          else
+            echo "ENVIRONMENT=development" >> $GITHUB_ENV
+          fi
+          echo "Selected environment: ${{ env.ENVIRONMENT }}"
+
+      - name: Build application for development
+        if: env.ENVIRONMENT == 'development'
+        run: npm run build:dev
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY_DEV }}
+          VITE_API_URL: ${{ secrets.VITE_API_URL_DEV }}
+          VITE_ENVIRONMENT: development
+
+      - name: Build application for staging
+        if: env.ENVIRONMENT == 'staging'
+        run: npm run build:dev
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY_STAGING }}
+          VITE_API_URL: ${{ secrets.VITE_API_URL_STAGING }}
+          VITE_ENVIRONMENT: staging
+
+      - name: Build application for production
+        if: env.ENVIRONMENT == 'production'
+        run: npm run build:prod
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY }}
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          VITE_ENVIRONMENT: production
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-artifacts
+          path: dist/
+          retention-days: 1
+
+  deploy-preview:
+    name: Deploy Preview
+    if: github.event_name == 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: build-artifacts
+          path: dist/
+
+      - name: Deploy to Vercel (Preview)
+        uses: amondnet/vercel-action@v20
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          working-directory: ./
+          vercel-args: '--prod'
+
+  deploy-development:
+    name: Deploy Development
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'development')
+    needs: build
+    runs-on: ubuntu-latest
+    environment: development
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: build-artifacts
+          path: dist/
+
+      - name: Deploy to Vercel (Development)
+        uses: amondnet/vercel-action@v20
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID_DEV }}
+          working-directory: ./
+          vercel-args: '--prod'
+
+  deploy-staging:
+    name: Deploy Staging
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/staging') || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    needs: build
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: build-artifacts
+          path: dist/
+
+      - name: Deploy to Vercel (Staging)
+        uses: amondnet/vercel-action@v20
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID_STAGING }}
+          working-directory: ./
+          vercel-args: '--prod'
+
+  deploy-production:
+    name: Deploy Production
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: build-artifacts
+          path: dist/
+
+      - name: Deploy to Vercel (Production)
+        uses: amondnet/vercel-action@v20
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          working-directory: ./
+          vercel-args: '--prod' 
