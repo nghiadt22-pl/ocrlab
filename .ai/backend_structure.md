@@ -13,54 +13,6 @@ The OCR Lab backend is divided into several core layers:
 
 ---
 
-## 2. Directory Layout
-
-Sample structure that can be adapted to Azure Functions:
-
-```
-backend/
- ├─ __init__.py           # Optional for Python packaging
- ├─ api/
- │   ├─ __init__.py
- │   ├─ main.py           # Entry point for the REST API (FastAPI/Flask/Express, etc.)
- │   ├─ routes/
- │   │   ├─ files.py      # Endpoints for file upload, status, retrieval
- │   │   ├─ folders.py    # Endpoints for folder CRUD
- │   │   ├─ search.py     # Endpoints for semantic search queries
- │   │   ├─ usage.py      # Endpoints for usage metrics
- │   │   └─ billing.py    # Endpoints for billing/payments
- │   └─ middleware/
- │       ├─ auth.py       # Clerk or other JWT-based auth
- │       └─ rate_limit.py # Optional rate-limiting or usage-limiting logic
- ├─ services/
- │   ├─ ocr.py            # Handles calls to Azure Document Intelligence
- │   ├─ storage.py        # Manages Azure Blob/Queue operations
- │   ├─ search.py         # Manages vector DB upserts, search queries
- │   ├─ usage.py          # Records usage (pages processed, queries)
- │   ├─ billing.py        # Manages HitPay or other payment flows
- │   └─ ...
- ├─ db/
- │   ├─ database.py       # Creates connections to Postgres, defines ORM or raw queries
- │   └─ models.py         # SQLAlchemy or equivalent schema definitions
- ├─ config/
- │   └─ settings.py       # Stores environment variable parsing for DB credentials, Azure keys, etc.
- ├─ tests/
- │   ├─ test_api.py
- │   ├─ test_ocr.py
- │   ├─ test_storage.py
- │   └─ ...
- └─ requirements.txt       # Python dependencies or package.json for Node
-```
-
-**Key Points**  
-- **`api/`** folder contains all route definitions and the main entry point for the service.  
-- **`services/`** folder encapsulates domain-specific logic (OCR, search, usage tracking).  
-- **`db/`** folder manages the Postgres schemas and connections.  
-- **`config/`** holds environment-specific settings, ensuring that credentials remain separate from source code.  
-- **`tests/`** is recommended to maintain test coverage and ensure each service works correctly.  
-
----
-
 ## 3. Database Setup (Postgres)
 
 Postgres handles user data, file metadata, and usage tracking. It may also store subscription or billing records if Clerk's default data is insufficient.

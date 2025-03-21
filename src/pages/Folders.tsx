@@ -8,7 +8,8 @@ import {
   FolderPlusIcon,
   Trash2,
   Edit,
-  Share
+  Share,
+  Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
@@ -30,24 +31,41 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-
-// Mock data for folders
-const mockFolders = [
-  { id: 1, name: 'Finance', files: 12, lastUpdated: '2023-12-15' },
-  { id: 2, name: 'Contracts', files: 8, lastUpdated: '2023-12-10' },
-  { id: 3, name: 'Invoices', files: 24, lastUpdated: '2023-12-05' },
-  { id: 4, name: 'Reports', files: 6, lastUpdated: '2023-12-01' },
-  { id: 5, name: 'HR Documents', files: 15, lastUpdated: '2023-11-28' },
-  { id: 6, name: 'Marketing', files: 9, lastUpdated: '2023-11-25' },
-];
+import { useFolders } from '@/hooks/use-api';
+import { useToast } from '@/components/ui/use-toast';
+import { format } from 'date-fns';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const Folders: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
+  const [folderToDelete, setFolderToDelete] = useState<number | null>(null);
+  const { toast } = useToast();
+  
+  // Use the folders API hook
+  const { 
+    folders, 
+    isLoading, 
+    isError, 
+    error, 
+    createFolder, 
+    deleteFolder,
+    isCreating,
+    isDeleting
+  } = useFolders();
   
   // Filter folders based on search query
-  const filteredFolders = mockFolders.filter(folder => 
+  const filteredFolders = folders.filter(folder => 
     folder.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
   
@@ -55,12 +73,28 @@ const Folders: React.FC = () => {
   const handleCreateFolder = (e: React.FormEvent) => {
     e.preventDefault();
     if (newFolderName.trim()) {
-      // In a real app, this would call an API to create the folder
-      console.log('Creating folder:', newFolderName);
+      createFolder(newFolderName.trim());
       setNewFolderName('');
       setIsCreateDialogOpen(false);
     }
   };
+
+  // Handle folder deletion
+  const handleDeleteFolder = () => {
+    if (folderToDelete !== null) {
+      deleteFolder(folderToDelete);
+      setFolderToDelete(null);
+    }
+  };
+
+  // Show error if API call fails
+  if (isError && error) {
+    toast({
+      title: 'Error loading folders',
+      description: error.message,
+      variant: 'destructive',
+    });
+  }
 
   return (
     <div className="space-y-8">
@@ -113,7 +147,10 @@ const Folders: React.FC = () => {
                   <Button type="button" variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
                     Cancel
                   </Button>
-                  <Button type="submit">Create Folder</Button>
+                  <Button type="submit" disabled={isCreating}>
+                    {isCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Create Folder
+                  </Button>
                 </DialogFooter>
               </form>
             </DialogContent>
@@ -121,8 +158,15 @@ const Folders: React.FC = () => {
         </div>
       </div>
       
+      {/* Loading state */}
+      {isLoading && (
+        <div className="flex justify-center items-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      )}
+      
       {/* Folders grid */}
-      {filteredFolders.length > 0 ? (
+      {!isLoading && filteredFolders.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredFolders.map((folder) => (
             <Card key={folder.id} className="overflow-hidden card-hover">
@@ -136,7 +180,7 @@ const Folders: React.FC = () => {
                       <div>
                         <h3 className="font-medium text-lg">{folder.name}</h3>
                         <p className="text-sm text-muted-foreground">
-                          {folder.files} {folder.files === 1 ? 'file' : 'files'}
+                          Created on {format(new Date(folder.created_at), 'MMM d, yyyy')}
                         </p>
                       </div>
                     </div>
@@ -157,7 +201,13 @@ const Folders: React.FC = () => {
                           Share
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem className="cursor-pointer text-destructive">
+                        <DropdownMenuItem 
+                          className="cursor-pointer text-destructive"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setFolderToDelete(folder.id);
+                          }}
+                        >
                           <Trash2 className="h-4 w-4 mr-2" />
                           Delete
                         </DropdownMenuItem>
@@ -167,14 +217,17 @@ const Folders: React.FC = () => {
                 </CardContent>
                 <CardFooter className="p-4 pt-0 border-t bg-muted/30">
                   <p className="text-xs text-muted-foreground">
-                    Last updated on {folder.lastUpdated}
+                    Last updated on {format(new Date(folder.updated_at), 'MMM d, yyyy')}
                   </p>
                 </CardFooter>
               </Link>
             </Card>
           ))}
         </div>
-      ) : (
+      )}
+      
+      {/* Empty state */}
+      {!isLoading && filteredFolders.length === 0 && (
         <div className="flex flex-col items-center justify-center py-12 space-y-4">
           <div className="bg-muted p-4 rounded-full">
             <FolderPlusIcon className="h-8 w-8 text-muted-foreground" />
@@ -195,6 +248,29 @@ const Folders: React.FC = () => {
           </Button>
         </div>
       )}
+      
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={folderToDelete !== null} onOpenChange={(open) => !open && setFolderToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete this folder and all its contents. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleDeleteFolder}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

@@ -28,6 +28,9 @@ dist-ssr
 .env
 .env.production
 
+function_app/.env
+function_app/.env.production
+
 function_app/local.settings.json
 
 # Private individual user cursor rules
@@ -39,3 +42,5 @@ docs/
 .vercel
 
 *.pyc
+
+test_pdfs

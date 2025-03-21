@@ -3,6 +3,14 @@
       "puppeteer": {
         "command": "npx",
         "args": ["-y", "@modelcontextprotocol/server-puppeteer"]
+      },
+      "postgres": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-postgres",
+          "postgresql://dev@troypencillabs.onmicrosoft.com:123Edc@159@pltest.postgres.database.azure.com:5432/postgres"
+        ]
       }
     }
   }

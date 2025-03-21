@@ -8,11 +8,12 @@
       }
     },
     "logLevel": {
-      "default": "Information",
+      "default": "Warning",
+      "Host.Aggregator": "Trace",
       "Host.Results": "Information",
-      "Function": "Information",
-      "Host.Aggregator": "Information"
-    }
+      "Function": "Information"
+    },
+    "fileLoggingMode": "always"
   },
   "extensionBundle": {
     "id": "Microsoft.Azure.Functions.ExtensionBundle",

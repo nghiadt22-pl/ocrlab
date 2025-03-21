@@ -16,6 +16,8 @@ alwaysApply: false
 - Use the correct deployment command for the OCR Lab project
 - Ensure all dependencies are installed before deployment
 - Verify deployment success after command execution
+- NEVER restart the function app manually during testing as this can disrupt message processing
+- Ensure all queue messages are properly Base64 encoded for Azure Functions compatibility
 
 ## Deployment Commands
 
@@ -29,6 +31,24 @@ func azure functionapp publish testpl
 2. Run the deployment command
 3. Verify deployment success
 4. Test the deployed functions
+
+## Important Warnings
+
+### Do NOT Restart Function App During Processing
+- Never use `func start` or restart the function app when messages are in the queue
+- Restarting disrupts message processing and can lead to message loss
+- Instead, deploy changes correctly using the proper deployment command
+
+### Queue Message Encoding
+- Azure Functions expects queue messages to be Base64 encoded by default
+- All messages sent to queues must be properly encoded:
+  ```python
+  message_json = json.dumps(message)
+  message_bytes = message_json.encode('utf-8')
+  message_base64 = base64.b64encode(message_bytes).decode('utf-8')
+  queue_client.send_message(message_base64)
+  ```
+- Failure to encode messages will result in them moving to the poison queue
 
 ## Examples
 
@@ -46,7 +66,14 @@ func deploy
 # This command doesn't exist and will fail
 </example>
 
+<example type="invalid">
+# Never do this during testing
+func start
+# This will restart the function app and can disrupt message processing
+</example>
+
 ## Notes
 - The testpl function app is the designated deployment target for the OCR Lab project
 - Always test locally before deploying to Azure
-- After deployment, test the Azure Queue implementation in the deployed environment 
+- After deployment, test the Azure Queue implementation in the deployed environment
+- Check poison queues for any failed message processing 

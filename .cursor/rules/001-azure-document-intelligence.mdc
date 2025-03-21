@@ -1,6 +1,6 @@
 ---
 description: 
-globs: function_app/**/*.py
+globs: function_app/**/*.py,function_app/*.py
 alwaysApply: false
 ---
 # Azure Document Intelligence Usage
@@ -16,12 +16,14 @@ alwaysApply: false
 - Never use the deprecated Azure Form Recognizer SDK
 - Follow the official migration guide when updating existing code
 - Use the appropriate client classes and methods from the new SDK
+- Always include the required `body` parameter when calling `begin_analyze_document`
 
 ## Migration Notes
 - `FormRecognizerClient` → `DocumentIntelligenceClient`
 - `DocumentAnalysisClient` → `DocumentIntelligenceClient`
 - `begin_analyze_document` → `begin_analyze_document`
 - Import from `azure.ai.documentintelligence` instead of `azure.ai.formrecognizer`
+- The `begin_analyze_document` method requires a `body` parameter (can be AnalyzeBatchDocumentsRequest, JSON, or IO[bytes])
 
 ## Examples
 
@@ -36,11 +38,13 @@ document_intelligence_client = DocumentIntelligenceClient(
     credential=AzureKeyCredential("your-api-key")
 )
 
-# Analyze a document
-poller = document_intelligence_client.begin_analyze_document(
-    "prebuilt-layout", document=open("sample.pdf", "rb")
-)
-result = poller.result()
+# Analyze a document - NOTE the body parameter is required
+with open("sample.pdf", "rb") as document_file:
+    poller = document_intelligence_client.begin_analyze_document(
+        "prebuilt-layout", 
+        body=document_file
+    )
+    result = poller.result()
 </example>
 
 <example type="invalid">
@@ -60,5 +64,5 @@ result = poller.result()
 </example>
 
 ## Reference
-- [Official Migration Guide](mdc:https:/github.com/Azure/azure-sdk-for-python/blob/main/sdk/documentintelligence/azure-ai-documentintelligence/MIGRATION_GUIDE.md)
-- [Azure Document Intelligence Documentation](mdc:https:/learn.microsoft.com/en-us/azure/ai-services/document-intelligence) 
+- [Official Migration Guide](mdc:https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/documentintelligence/azure-ai-documentintelligence/MIGRATION_GUIDE.md)
+- [Azure Document Intelligence Documentation](mdc:https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence) 

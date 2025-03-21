@@ -135,6 +135,7 @@ async function pollForResults(operationUrl: string): Promise<any> {
     // Check if the operation is complete
     if (result.status === 'succeeded') {
       console.log('Document processing complete');
+      console.log('Full Azure result structure:', JSON.stringify(result.analyzeResult, null, 2));
       return result;
     } else if (result.status === 'failed') {
       throw new Error(`Azure API operation failed: ${JSON.stringify(result.error)}`);

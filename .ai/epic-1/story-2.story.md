@@ -1,177 +1,167 @@
-# Story 2: Core Functionality Development - OCR Extraction
+# Story 2: PostgreSQL Database Implementation
 
-## Status: In Progress
+**Status: Draft**
+**Type: Backend**
+**Priority: High**
+**Epic: 1 - Core Infrastructure**
 
-## Description
-Implement core OCR functionality including table, image, and handwriting extraction using Azure Document Intelligence. This story focuses on enhancing the OCR processing pipeline to extract structured data from documents.
+## Objective
+Implement the PostgreSQL database structure for OCR LAB, including all necessary tables for user management, file/folder metadata, and usage statistics.
+
+## Background
+The application requires a robust relational database to store user data, file metadata, and usage statistics. PostgreSQL was chosen for its reliability, JSONB support, and ability to handle complex queries efficiently.
+
+## Acceptance Criteria
+1. Database schema created with all necessary tables:
+   - Users table (synced with Clerk)
+   - Folders table (with nested folder support)
+   - Files table (with metadata and processing status)
+   - Usage statistics table
+   - Processing queue status table
+
+2. Basic CRUD operations implemented:
+   - User management functions
+   - Folder operations (create, read, update, delete)
+   - File metadata operations
+   - Usage tracking functions
+
+3. Database indexes created for optimal performance:
+   - Primary and foreign keys
+   - Common query paths
+   - Full-text search capabilities where needed
+
+## Technical Details
+
+### Database Schema
+
+```sql
+-- Users table (synced with Clerk)
+CREATE TABLE users (
+    id VARCHAR(255) PRIMARY KEY,  -- Clerk user ID
+    email VARCHAR(255) NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    settings JSONB DEFAULT '{}'::jsonb
+);
+
+-- Folders table
+CREATE TABLE folders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    parent_id UUID REFERENCES folders(id),
+    user_id VARCHAR(255) REFERENCES users(id),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    path TEXT[] NOT NULL,
+    UNIQUE (user_id, parent_id, name)
+);
+
+-- Files table
+CREATE TABLE files (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    folder_id UUID REFERENCES folders(id),
+    user_id VARCHAR(255) REFERENCES users(id),
+    blob_path TEXT NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    mime_type VARCHAR(100),
+    status VARCHAR(50) NOT NULL,  -- pending, processing, completed, error
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    processed_at TIMESTAMPTZ,
+    error_message TEXT
+);
+
+-- Usage statistics table
+CREATE TABLE usage_stats (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id VARCHAR(255) REFERENCES users(id),
+    date DATE NOT NULL,
+    pages_processed INTEGER DEFAULT 0,
+    queries_made INTEGER DEFAULT 0,
+    storage_bytes BIGINT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (user_id, date)
+);
+
+-- Processing queue table
+CREATE TABLE processing_queue (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    file_id UUID REFERENCES files(id),
+    status VARCHAR(50) NOT NULL,
+    priority INTEGER DEFAULT 0,
+    attempts INTEGER DEFAULT 0,
+    last_attempt_at TIMESTAMPTZ,
+    error_message TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### Required Indexes
+
+```sql
+-- Folders indexes
+CREATE INDEX idx_folders_user_id ON folders(user_id);
+CREATE INDEX idx_folders_parent_id ON folders(parent_id);
+CREATE INDEX idx_folders_path ON folders USING gin(path);
+
+-- Files indexes
+CREATE INDEX idx_files_user_id ON files(user_id);
+CREATE INDEX idx_files_folder_id ON files(folder_id);
+CREATE INDEX idx_files_status ON files(status);
+CREATE INDEX idx_files_metadata ON files USING gin(metadata);
+
+-- Usage stats indexes
+CREATE INDEX idx_usage_stats_user_id_date ON usage_stats(user_id, date);
+
+-- Processing queue indexes
+CREATE INDEX idx_processing_queue_status ON processing_queue(status);
+CREATE INDEX idx_processing_queue_file_id ON processing_queue(file_id);
+```
 
 ## Tasks
+1. [ ] Set up PostgreSQL database in Azure
+   - [ ] Create database instance
+   - [ ] Configure basic networking
+   - [ ] Set up basic logging
 
-### OCR Processing Pipeline
-- [x] Set up Azure Document Intelligence client
-  - [x] Configure authentication with Azure credentials
-  - [x] Create client factory for different document types
-  - [x] Implement error handling and retries
-  - [x] Write tests for the client
-- [x] Implement PDF text extraction
-  - [x] Extract raw text content
-  - [x] Preserve document structure
-  - [x] Handle multi-page documents
-  - [x] Write tests for text extraction
-- [x] Implement table extraction
-  - [x] Create TableExtractor class
-  - [x] Extract tables as structured data
-  - [x] Handle row and column spans
-  - [x] Preserve table structure
-- [x] Implement image content extraction
-  - [x] Create ImageExtractor class
-  - [x] Extract images from documents
-  - [x] Handle image deduplication
-  - [x] Convert image data to appropriate format
-- [ ] Implement handwriting recognition
-  - [x] Create HandwritingExtractor class
-  - [x] Extract handwritten text
-  - [x] Merge related handwritten items
-  - [ ] Fix issues with handwriting extraction tests:
-    - [ ] Fix floating-point precision issue in create_merged_item
-    - [ ] Fix extract_handwritten_items_from_words to extract all items
-    - [ ] Add merged_count to all merged items
-- [x] Create unified document analyzer
-  - [x] Combine all extraction capabilities
-  - [x] Create unified item list
-  - [x] Add configuration options
-  - [x] Implement comprehensive document analysis
-- [ ] Generate document summaries
-  - [x] Create summary from extracted text
-  - [x] Extract keywords
-  - [x] Generate metadata
-  - [ ] Fix issues with summary generation tests:
-    - [ ] Fix word frequency calculation
-    - [ ] Fix sentence selection to maintain original order
-    - [ ] Fix sentence splitting to handle punctuation correctly
-    - [ ] Improve tokenization to remove all stop words
-- [x] Implement queue-based processing
-  - [x] Set up Azure Queue trigger
-  - [x] Handle processing messages
-  - [x] Update file status
+2. [ ] Create database models and schemas
+   - [ ] Implement SQLAlchemy models
+   - [ ] Add basic validation
+   - [ ] Create database indexes
 
-### Vector Database Integration
-- [x] Implement text chunking logic
-- [x] Generate and store embeddings
-- [x] Enhance semantic search functionality
-- [ ] Add tests for vector database integration
+3. [ ] Create database access layer
+   - [ ] Implement CRUD operations
+   - [ ] Create helper functions
 
-### Document Processing API
-- [x] Create document upload endpoint
-- [x] Create document processing status endpoint
-- [x] Create document search endpoint
-- [ ] Add tests for API endpoints
+4. [ ] Write unit tests
+   - [ ] Test database models
+   - [ ] Test CRUD operations
+   - [ ] Test error handling
 
-## Implementation Notes
+5. [ ] Create documentation
+   - [ ] Document schema design
+   - [ ] Add API documentation
+   - [ ] Include setup instructions
 
-### Table Extraction
-The table extraction functionality has been implemented in the `TableExtractor` class. This class extracts tables from documents and organizes them into a structured format. It handles row and column spans, preserves table structure, and provides metadata such as confidence scores and bounding boxes.
+## Dependencies
+- Azure PostgreSQL instance
+- SQLAlchemy ORM
+- psycopg2-binary for PostgreSQL adapter
 
-Key features:
-- Extracts tables using Azure Document Intelligence
-- Organizes table cells into a 2D array format
-- Handles row and column spans
-- Provides table metadata (row count, column count, confidence)
-- Includes bounding box information for visualization
+## Risks and Mitigations
+1. **Risk**: Performance bottlenecks
+   - **Mitigation**: Proper indexing and monitoring from the start
 
-### Image Extraction
-The image extraction functionality has been implemented in the `ImageExtractor` class. This class extracts images from documents using multiple methods to ensure comprehensive coverage. It handles image deduplication, converts image data to appropriate formats, and provides metadata.
+## Notes
+- Monitor query performance from the start
+- Keep track of database size and growth rate
 
-Key features:
-- Extracts images using multiple methods (document content, visual elements, figures)
-- Deduplicates images based on bounding box overlap
-- Converts image data to base64 format when available
-- Provides image metadata (confidence, page number, bounding box)
-- Handles different image formats and sources
-
-### Handwriting Extraction
-The handwriting extraction functionality has been implemented in the `HandwritingExtractor` class. This class extracts handwritten text from documents using Azure Document Intelligence. It merges related handwritten items, handles different handwriting styles, and provides metadata.
-
-Key features:
-- Extracts handwritten text using multiple methods (styles, lines, words)
-- Merges related handwritten items for better readability
-- Handles different handwriting styles and formats
-- Provides handwriting metadata (confidence, page number, bounding box)
-- Includes support for multi-page documents
-
-### Unified Document Analyzer
-A comprehensive `DocumentAnalyzer` class has been created to combine all extraction capabilities. This class provides a unified interface for document analysis, allowing clients to extract text, tables, images, and handwriting in a single operation.
-
-Key features:
-- Combines all extraction capabilities (text, tables, images, handwriting)
-- Creates a unified item list with all extracted content
-- Provides configuration options to enable/disable specific extraction types
-- Sorts extracted items by page number and position
-- Includes comprehensive metadata for all extracted items
-
-### Document Summary Generation
-A `SummaryGenerator` class has been implemented to create summaries from document content. This class uses extractive summarization techniques to identify important sentences and extract relevant keywords.
-
-Key features:
-- Generates document summaries using extractive techniques
-- Extracts keywords based on frequency and relevance
-- Provides configurable summary length
-- Integrates with the document analyzer
-- Returns structured summary data including keywords
-
-### Vector Database Integration
-The vector database integration includes text chunking, embedding generation, and storage in Azure AI Search. The implementation consists of three main components:
-
-1. **TextChunker**: Splits document content into chunks suitable for vectorization
-   - Configurable chunk size and overlap
-   - Page-based chunking to maintain document structure
-   - Handles different content types (text, tables, handwriting)
-
-2. **EmbeddingsGenerator**: Creates vector embeddings for document chunks
-   - Integrates with Azure AI services for embedding generation
-   - Mock implementation for testing purposes
-   - Batch processing to handle large documents
-
-3. **VectorDatabase**: Stores and retrieves document embeddings
-   - Integration with Azure AI Search
-   - Support for filters and metadata
-   - Mock implementation for testing purposes
-
-### Queue-Based Processing
-The queue-based processing feature uses Azure Queue Storage to handle asynchronous document processing. The implementation includes:
-
-- Azure Queue trigger function to process documents
-- Document download from Blob Storage
-- OCR processing using Document Intelligence
-- Summary generation and vector storage
-- Status updates and error handling
-
-### Document Processing API
-The API endpoints for document processing include:
-
-1. **Document Upload**: Handles document upload and initiates processing
-   - Stores documents in Blob Storage
-   - Creates processing queue message
-   - Returns file ID and status information
-
-2. **Processing Status**: Checks the status of document processing
-   - Returns processing status and extracted content statistics
-   - Includes document summary and metadata
-   - Handles error states
-
-3. **Document Search**: Searches for documents using vector search
-   - Supports semantic search across document content
-   - Returns relevant document chunks and metadata
-   - Handles filters and pagination
-
-### Frontend Integration
-The frontend has been updated to handle the new content types. The `transformAzureResults` function in `azure-ai.ts` now handles tables, images, and handwritten text, and the `ExtractedContent` component can display all content types.
-
-## Testing
-All implemented components have been tested with sample PDF documents. The tests verify that text, tables, images, handwritten text, summaries, and vector search functionality work correctly.
-
-## Next Steps
-- Improve summary generation with more advanced NLP techniques
-- Enhance vector search with filtering and relevance tuning
-- Implement document processing status tracking in database
-- Add UI components for summary display and search results
+## Definition of Done
+- [ ] All tasks completed and tested
+- [ ] Documentation updated
+- [ ] Unit tests passing
+- [ ] Performance tests completed 
