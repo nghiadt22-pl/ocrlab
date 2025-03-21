@@ -7,6 +7,12 @@ import os
 import azure.functions as func
 import datetime
 import base64
+from typing import Optional, List, Dict, Any
+
+# Import database modules
+from database.connection import get_db_session
+from database import crud
+from database.models import User, Folder, File, UsageStat
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,6 +33,29 @@ def create_error_response(status_code, message):
         status_code=status_code,
         mimetype="application/json"
     )
+
+def get_or_create_user(user_id: str, email: Optional[str] = None) -> Optional[User]:
+    """Get or create a user in the database."""
+    try:
+        db = get_db_session()
+        user = crud.get_user(db, user_id)
+        
+        if not user and email:
+            # Create user if it doesn't exist
+            user = crud.create_user(db, user_id, email)
+            logger.info(f"Created new user with ID {user_id}")
+        elif not user:
+            # Can't create user without email
+            logger.error(f"User {user_id} not found and no email provided")
+            return None
+            
+        return user
+    except Exception as e:
+        logger.error(f"Error getting or creating user: {str(e)}")
+        return None
+    finally:
+        if 'db' in locals():
+            db.close()
 
 def get_queue_client(queue_name="ocr-processing-queue"):
     """Get a queue client for the specified queue."""
@@ -86,23 +115,35 @@ def list_folders(req: func.HttpRequest) -> func.HttpResponse:
         if not user_id:
             return create_error_response(400, "User ID is required in x-user-id header")
         
-        # TODO: Implement folder listing logic
-        # For now, return mock data
-        folders = [
-            {
-                "id": 1,
-                "name": "Home",
-                "user_id": user_id,
-                "created_at": datetime.datetime.now().isoformat(),
-                "updated_at": datetime.datetime.now().isoformat()
-            }
-        ]
+        # Get parent_id from query parameters if provided
+        parent_id_str = req.params.get('parent_id')
+        parent_id = int(parent_id_str) if parent_id_str else None
         
-        return func.HttpResponse(
-            body=json.dumps({"folders": folders}),
-            status_code=200,
-            mimetype="application/json"
-        )
+        # Get folder list from database
+        db = get_db_session()
+        try:
+            folders = crud.get_folders_by_user(db, user_id, parent_id)
+            
+            # Convert folder objects to dictionary for JSON serialization
+            folders_data = []
+            for folder in folders:
+                folders_data.append({
+                    "id": folder.id,
+                    "name": folder.name,
+                    "parent_id": folder.parent_id,
+                    "user_id": folder.user_id,
+                    "path": folder.path,
+                    "created_at": folder.created_at.isoformat() if folder.created_at else None,
+                    "updated_at": folder.updated_at.isoformat() if folder.updated_at else None
+                })
+            
+            return func.HttpResponse(
+                body=json.dumps({"folders": folders_data}),
+                status_code=200,
+                mimetype="application/json"
+            )
+        finally:
+            db.close()
     except Exception as e:
         logger.error(f"Error listing folders: {str(e)}")
         return create_error_response(500, f"Failed to list folders: {str(e)}")
@@ -120,22 +161,37 @@ def create_folder(req: func.HttpRequest) -> func.HttpResponse:
             return create_error_response(400, "Folder name is required")
         
         folder_name = req_body.get('name')
+        parent_id = req_body.get('parent_id')  # Optional parent_id
         
-        # TODO: Implement folder creation logic
-        # For now, return mock data
-        new_folder = {
-            "id": 2,
-            "name": folder_name,
-            "user_id": user_id,
-            "created_at": datetime.datetime.now().isoformat(),
-            "updated_at": datetime.datetime.now().isoformat()
-        }
+        # Get or create user
+        email = req.headers.get('x-user-email')
+        user = get_or_create_user(user_id, email)
+        if not user:
+            return create_error_response(500, "Failed to find or create user")
         
-        return func.HttpResponse(
-            body=json.dumps({"folder": new_folder}),
-            status_code=201,
-            mimetype="application/json"
-        )
+        # Create folder in database
+        db = get_db_session()
+        try:
+            new_folder = crud.create_folder(db, folder_name, user_id, parent_id)
+            
+            # Convert folder object to dictionary for JSON serialization
+            folder_data = {
+                "id": new_folder.id,
+                "name": new_folder.name,
+                "parent_id": new_folder.parent_id,
+                "user_id": new_folder.user_id,
+                "path": new_folder.path,
+                "created_at": new_folder.created_at.isoformat() if new_folder.created_at else None,
+                "updated_at": new_folder.updated_at.isoformat() if new_folder.updated_at else None
+            }
+            
+            return func.HttpResponse(
+                body=json.dumps({"folder": folder_data}),
+                status_code=201,
+                mimetype="application/json"
+            )
+        finally:
+            db.close()
     except Exception as e:
         logger.error(f"Error creating folder: {str(e)}")
         return create_error_response(500, f"Failed to create folder: {str(e)}")
@@ -148,20 +204,39 @@ def delete_folder(req: func.HttpRequest) -> func.HttpResponse:
         if not user_id:
             return create_error_response(400, "User ID is required in x-user-id header")
         
-        folder_id = req.route_params.get('folder_id')
-        if not folder_id:
+        folder_id_str = req.route_params.get('folder_id')
+        if not folder_id_str:
             return create_error_response(400, "Folder ID is required")
         
-        # TODO: Implement folder deletion logic
+        folder_id = int(folder_id_str)
         
-        return func.HttpResponse(
-            body=json.dumps({
-                "success": True,
-                "message": "Folder deleted successfully"
-            }),
-            status_code=200,
-            mimetype="application/json"
-        )
+        # Delete folder from database
+        db = get_db_session()
+        try:
+            # Verify the folder belongs to this user
+            folder = crud.get_folder(db, folder_id)
+            if not folder:
+                return create_error_response(404, "Folder not found")
+            
+            if folder.user_id != user_id:
+                return create_error_response(403, "You don't have permission to delete this folder")
+            
+            # Delete the folder
+            success = crud.delete_folder(db, folder_id)
+            
+            if success:
+                return func.HttpResponse(
+                    body=json.dumps({
+                        "success": True,
+                        "message": "Folder deleted successfully"
+                    }),
+                    status_code=200,
+                    mimetype="application/json"
+                )
+            else:
+                return create_error_response(500, "Failed to delete folder")
+        finally:
+            db.close()
     except Exception as e:
         logger.error(f"Error deleting folder: {str(e)}")
         return create_error_response(500, f"Failed to delete folder: {str(e)}")
@@ -172,12 +247,14 @@ def upload_file(req: func.HttpRequest) -> func.HttpResponse:
     """Upload a file to Azure Blob Storage."""
     try:
         user_id = get_user_id(req)
-        folder_id = req.headers.get('x-folder-id')
+        folder_id_str = req.headers.get('x-folder-id')
         
         if not user_id:
             return create_error_response(400, "User ID is required in x-user-id header")
-        if not folder_id:
+        if not folder_id_str:
             return create_error_response(400, "Folder ID is required in x-folder-id header")
+            
+        folder_id = int(folder_id_str)
         
         # Get the file from the request
         files = req.files.get('file')
@@ -211,59 +288,79 @@ def upload_file(req: func.HttpRequest) -> func.HttpResponse:
             logger.info(f"Mock: File {filename} uploaded to blob storage")
             blob_url = f"https://mock-storage.com/{blob_name}"
             
-            # Save file metadata to database (mock)
-            file_id = 1  # This would normally be assigned by the database
-            file_data = {
-                "id": file_id,
-                "name": filename,
-                "folder_id": int(folder_id),
-                "blob_url": blob_url,
-                "status": "uploaded",
-                "size_bytes": file_size,
-                "content_type": content_type,
-                "created_at": datetime.datetime.now().isoformat(),
-                "updated_at": datetime.datetime.now().isoformat()
-            }
+            # Get or create user
+            email = req.headers.get('x-user-email')
+            user = get_or_create_user(user_id, email)
+            if not user:
+                return create_error_response(500, "Failed to find or create user")
             
-            # Add a message to the OCR processing queue
+            # Save file to database
+            db = get_db_session()
             try:
-                # Create a message with the file information
-                message = {
-                    "file_id": file_id,
-                    "user_id": user_id,
-                    "folder_id": folder_id,
-                    "blob_name": blob_name,
-                    "container_name": "mock-container",
-                    "filename": filename,
-                    "content_type": content_type,
-                    "size_bytes": file_size,
-                    "timestamp": datetime.datetime.now().isoformat()
+                file_obj = crud.create_file(
+                    db, 
+                    filename, 
+                    user_id, 
+                    blob_url,
+                    file_size,
+                    content_type,
+                    folder_id
+                )
+                
+                # Add a message to the OCR processing queue
+                try:
+                    # Create a message with the file information
+                    message = {
+                        "file_id": file_obj.id,
+                        "user_id": user_id,
+                        "folder_id": folder_id,
+                        "blob_name": blob_name,
+                        "container_name": "mock-container",
+                        "filename": filename,
+                        "content_type": content_type,
+                        "size_bytes": file_size,
+                        "timestamp": datetime.datetime.now().isoformat()
+                    }
+                    
+                    # Get the queue client and send the message
+                    queue_client = get_queue_client()
+                    
+                    # Convert message to JSON string and encode as Base64 for Azure Functions compatibility
+                    message_json = json.dumps(message)
+                    message_bytes = message_json.encode('utf-8')
+                    message_base64 = base64.b64encode(message_bytes).decode('utf-8')
+                    
+                    # Send the Base64-encoded message
+                    queue_client.send_message(message_base64)
+                    
+                    # Update the file status to "processing"
+                    file_obj = crud.update_file_status(db, file_obj.id, "processing")
+                    
+                    logger.info(f"Added file {filename} to OCR processing queue")
+                except Exception as e:
+                    logger.error(f"Error adding to queue: {str(e)}")
+                    # Continue even if queue fails - we'll still return the file info
+                
+                # Convert file object to dictionary for JSON serialization
+                file_data = {
+                    "id": file_obj.id,
+                    "name": file_obj.name,
+                    "folder_id": file_obj.folder_id,
+                    "blob_path": file_obj.blob_path,
+                    "status": file_obj.status,
+                    "size_bytes": file_obj.size_bytes,
+                    "mime_type": file_obj.mime_type,
+                    "created_at": file_obj.created_at.isoformat() if file_obj.created_at else None,
+                    "updated_at": file_obj.updated_at.isoformat() if file_obj.updated_at else None
                 }
                 
-                # Get the queue client and send the message
-                queue_client = get_queue_client()
-                
-                # Convert message to JSON string and encode as Base64 for Azure Functions compatibility
-                message_json = json.dumps(message)
-                message_bytes = message_json.encode('utf-8')
-                message_base64 = base64.b64encode(message_bytes).decode('utf-8')
-                
-                # Send the Base64-encoded message
-                queue_client.send_message(message_base64)
-                
-                # Update the file status to "processing"
-                file_data["status"] = "processing"
-                
-                logger.info(f"Added file {filename} to OCR processing queue")
-            except Exception as e:
-                logger.error(f"Error adding to queue: {str(e)}")
-                # Continue even if queue fails - we'll still return the file info
-            
-            return func.HttpResponse(
-                body=json.dumps({"file": file_data}),
-                status_code=201,
-                mimetype="application/json"
-            )
+                return func.HttpResponse(
+                    body=json.dumps({"file": file_data}),
+                    status_code=201,
+                    mimetype="application/json"
+                )
+            finally:
+                db.close()
         
         # Upload to blob storage
         from azure.storage.blob import BlobServiceClient, ContentSettings
@@ -296,60 +393,79 @@ def upload_file(req: func.HttpRequest) -> func.HttpResponse:
         # Get the blob URL
         blob_url = blob_client.url
         
-        # Save file metadata to database (TODO: implement database connection)
-        # For now, we'll just return the file information
-        file_id = 1  # This would normally be assigned by the database
-        file_data = {
-            "id": file_id,
-            "name": filename,
-            "folder_id": int(folder_id),
-            "blob_url": blob_url,
-            "status": "uploaded",
-            "size_bytes": file_size,
-            "content_type": content_type,
-            "created_at": datetime.datetime.now().isoformat(),
-            "updated_at": datetime.datetime.now().isoformat()
-        }
+        # Get or create user
+        email = req.headers.get('x-user-email')
+        user = get_or_create_user(user_id, email)
+        if not user:
+            return create_error_response(500, "Failed to find or create user")
         
-        # Add a message to the OCR processing queue
+        # Save file to database
+        db = get_db_session()
         try:
-            # Create a message with the file information
-            message = {
-                "file_id": file_id,
-                "user_id": user_id,
-                "folder_id": folder_id,
-                "blob_name": blob_name,
-                "container_name": container_name,
-                "filename": filename,
-                "content_type": content_type,
-                "size_bytes": file_size,
-                "timestamp": datetime.datetime.now().isoformat()
+            file_obj = crud.create_file(
+                db, 
+                filename, 
+                user_id, 
+                blob_url,
+                file_size,
+                content_type,
+                folder_id
+            )
+            
+            # Add a message to the OCR processing queue
+            try:
+                # Create a message with the file information
+                message = {
+                    "file_id": file_obj.id,
+                    "user_id": user_id,
+                    "folder_id": folder_id,
+                    "blob_name": blob_name,
+                    "container_name": container_name,
+                    "filename": filename,
+                    "content_type": content_type,
+                    "size_bytes": file_size,
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+                
+                # Get the queue client and send the message
+                queue_client = get_queue_client()
+                
+                # Convert message to JSON string and encode as Base64 for Azure Functions compatibility
+                message_json = json.dumps(message)
+                message_bytes = message_json.encode('utf-8')
+                message_base64 = base64.b64encode(message_bytes).decode('utf-8')
+                
+                # Send the Base64-encoded message
+                queue_client.send_message(message_base64)
+                
+                # Update the file status to "processing"
+                file_obj = crud.update_file_status(db, file_obj.id, "processing")
+                
+                logger.info(f"Added file {filename} to OCR processing queue")
+            except Exception as e:
+                logger.error(f"Error adding to queue: {str(e)}")
+                # Continue even if queue fails - we'll still return the file info
+            
+            # Convert file object to dictionary for JSON serialization
+            file_data = {
+                "id": file_obj.id,
+                "name": file_obj.name,
+                "folder_id": file_obj.folder_id,
+                "blob_path": file_obj.blob_path,
+                "status": file_obj.status,
+                "size_bytes": file_obj.size_bytes,
+                "mime_type": file_obj.mime_type,
+                "created_at": file_obj.created_at.isoformat() if file_obj.created_at else None,
+                "updated_at": file_obj.updated_at.isoformat() if file_obj.updated_at else None
             }
             
-            # Get the queue client and send the message
-            queue_client = get_queue_client()
-            
-            # Convert message to JSON string and encode as Base64 for Azure Functions compatibility
-            message_json = json.dumps(message)
-            message_bytes = message_json.encode('utf-8')
-            message_base64 = base64.b64encode(message_bytes).decode('utf-8')
-            
-            # Send the Base64-encoded message
-            queue_client.send_message(message_base64)
-            
-            # Update the file status to "processing"
-            file_data["status"] = "processing"
-            
-            logger.info(f"Added file {filename} to OCR processing queue")
-        except Exception as e:
-            logger.error(f"Error adding to queue: {str(e)}")
-            # Continue even if queue fails - we'll still return the file info
-        
-        return func.HttpResponse(
-            body=json.dumps({"file": file_data}),
-            status_code=201,
-            mimetype="application/json"
-        )
+            return func.HttpResponse(
+                body=json.dumps({"file": file_data}),
+                status_code=201,
+                mimetype="application/json"
+            )
+        finally:
+            db.close()
     except Exception as e:
         logger.error(f"Error uploading file: {str(e)}")
         return create_error_response(500, f"Failed to upload file: {str(e)}")
@@ -359,34 +475,43 @@ def list_files(req: func.HttpRequest) -> func.HttpResponse:
     """List all files in a folder."""
     try:
         user_id = get_user_id(req)
-        folder_id = req.params.get('folder_id')
+        folder_id_str = req.params.get('folder_id')
         
         if not user_id:
             return create_error_response(400, "User ID is required in x-user-id header")
-        if not folder_id:
+        if not folder_id_str:
             return create_error_response(400, "Folder ID is required in query parameters")
+
+        folder_id = int(folder_id_str)
         
-        # TODO: Implement file listing logic
-        # For now, return mock data
-        files = [
-            {
-                "id": 1,
-                "name": "example.pdf",
-                "folder_id": int(folder_id),
-                "blob_url": "https://storage.azure.com/container/example.pdf",
-                "status": "uploaded",
-                "size_bytes": 1048576,
-                "content_type": "application/pdf",
-                "created_at": datetime.datetime.now().isoformat(),
-                "updated_at": datetime.datetime.now().isoformat()
-            }
-        ]
-        
-        return func.HttpResponse(
-            body=json.dumps({"files": files}),
-            status_code=200,
-            mimetype="application/json"
-        )
+        # Get file list from database
+        db = get_db_session()
+        try:
+            files = crud.get_files_by_folder(db, folder_id, user_id)
+            
+            # Convert file objects to dictionary for JSON serialization
+            files_data = []
+            for file in files:
+                files_data.append({
+                    "id": file.id,
+                    "name": file.name,
+                    "folder_id": file.folder_id,
+                    "blob_path": file.blob_path,
+                    "status": file.status,
+                    "size_bytes": file.size_bytes,
+                    "mime_type": file.mime_type,
+                    "created_at": file.created_at.isoformat() if file.created_at else None,
+                    "updated_at": file.updated_at.isoformat() if file.updated_at else None,
+                    "processed_at": file.processed_at.isoformat() if file.processed_at else None
+                })
+            
+            return func.HttpResponse(
+                body=json.dumps({"files": files_data}),
+                status_code=200,
+                mimetype="application/json"
+            )
+        finally:
+            db.close()
     except Exception as e:
         logger.error(f"Error listing files: {str(e)}")
         return create_error_response(500, f"Failed to list files: {str(e)}")
@@ -396,23 +521,44 @@ def delete_file(req: func.HttpRequest) -> func.HttpResponse:
     """Delete a file."""
     try:
         user_id = get_user_id(req)
-        file_id = req.params.get('id')
+        file_id_str = req.params.get('id')
         
         if not user_id:
             return create_error_response(400, "User ID is required in x-user-id header")
-        if not file_id:
+        if not file_id_str:
             return create_error_response(400, "File ID is required in query parameters")
         
-        # TODO: Implement file deletion logic
+        file_id = int(file_id_str)
         
-        return func.HttpResponse(
-            body=json.dumps({
-                "success": True,
-                "message": "File deleted successfully"
-            }),
-            status_code=200,
-            mimetype="application/json"
-        )
+        # Delete file from database
+        db = get_db_session()
+        try:
+            # Verify the file belongs to this user
+            file = crud.get_file(db, file_id)
+            if not file:
+                return create_error_response(404, "File not found")
+            
+            if file.user_id != user_id:
+                return create_error_response(403, "You don't have permission to delete this file")
+            
+            # Delete the file
+            success = crud.delete_file(db, file_id)
+            
+            if success:
+                # TODO: Also delete the blob from storage
+                
+                return func.HttpResponse(
+                    body=json.dumps({
+                        "success": True,
+                        "message": "File deleted successfully"
+                    }),
+                    status_code=200,
+                    mimetype="application/json"
+                )
+            else:
+                return create_error_response(500, "Failed to delete file")
+        finally:
+            db.close()
     except Exception as e:
         logger.error(f"Error deleting file: {str(e)}")
         return create_error_response(500, f"Failed to delete file: {str(e)}")
@@ -455,6 +601,15 @@ def search_query(req: func.HttpRequest) -> func.HttpResponse:
                     "pageNumber": 1
                 }
             ]
+            
+            # Update usage statistics to count this query
+            try:
+                db = get_db_session()
+                crud.update_queries_made(db, user_id, 1)
+                db.close()
+            except Exception as e:
+                logger.error(f"Error updating query usage statistics: {str(e)}")
+            
             return func.HttpResponse(
                 body=json.dumps({
                     "results": mock_results,
@@ -512,6 +667,14 @@ def search_query(req: func.HttpRequest) -> func.HttpResponse:
                 
                 formatted_results.append(formatted_result)
             
+            # Update usage statistics to count this query
+            try:
+                db = get_db_session()
+                crud.update_queries_made(db, user_id, 1)
+                db.close()
+            except Exception as e:
+                logger.error(f"Error updating query usage statistics: {str(e)}")
+            
             return func.HttpResponse(
                 body=json.dumps({"results": formatted_results}),
                 status_code=200,
@@ -533,20 +696,69 @@ def get_usage(req: func.HttpRequest) -> func.HttpResponse:
         if not user_id:
             return create_error_response(400, "User ID is required in x-user-id header")
         
-        # TODO: Implement usage tracking logic
-        # For now, return mock data
-        usage_data = {
-            "pages_processed": 100,
-            "queries_made": 50,
-            "storage_used_bytes": 10485760,
-            "last_updated": datetime.datetime.now().isoformat()
-        }
+        # Get date range parameters (defaults to today)
+        from datetime import date, timedelta
+        today = date.today()
         
-        return func.HttpResponse(
-            body=json.dumps({"usage": usage_data}),
-            status_code=200,
-            mimetype="application/json"
-        )
+        # Default to last 30 days if not specified
+        start_date_str = req.params.get('start_date')
+        end_date_str = req.params.get('end_date')
+        
+        try:
+            start_date = date.fromisoformat(start_date_str) if start_date_str else today - timedelta(days=30)
+            end_date = date.fromisoformat(end_date_str) if end_date_str else today
+        except ValueError:
+            return create_error_response(400, "Invalid date format. Use ISO format (YYYY-MM-DD)")
+        
+        # Get usage stats from database
+        db = get_db_session()
+        try:
+            # Make sure we have stats for today
+            stats_today = crud.get_or_create_usage_stat(db, user_id)
+            
+            # Get all stats for the date range
+            stats = crud.get_usage_stats_by_user(db, user_id, start_date, end_date)
+            
+            # Calculate aggregated usage
+            total_pages = sum(stat.pages_processed for stat in stats)
+            total_queries = sum(stat.queries_made for stat in stats)
+            total_storage = sum(stat.storage_bytes for stat in stats)
+            
+            # Get the most recent update time
+            last_updated = max((stat.updated_at for stat in stats), default=None)
+            
+            # Format the usage data for the response
+            usage_data = {
+                "total": {
+                    "pages_processed": total_pages,
+                    "queries_made": total_queries,
+                    "storage_bytes": total_storage,
+                    "last_updated": last_updated.isoformat() if last_updated else None
+                },
+                "today": {
+                    "pages_processed": stats_today.pages_processed,
+                    "queries_made": stats_today.queries_made,
+                    "storage_bytes": stats_today.storage_bytes,
+                    "last_updated": stats_today.updated_at.isoformat() if stats_today.updated_at else None
+                },
+                "daily": [
+                    {
+                        "date": stat.date.isoformat(),
+                        "pages_processed": stat.pages_processed,
+                        "queries_made": stat.queries_made,
+                        "storage_bytes": stat.storage_bytes
+                    }
+                    for stat in stats
+                ]
+            }
+            
+            return func.HttpResponse(
+                body=json.dumps({"usage": usage_data}),
+                status_code=200,
+                mimetype="application/json"
+            )
+        finally:
+            db.close()
     except Exception as e:
         logger.error(f"Error retrieving usage data: {str(e)}")
         return create_error_response(500, f"Failed to retrieve usage data: {str(e)}")
@@ -715,13 +927,44 @@ def process_ocr_queue(msg: func.QueueMessage) -> None:
             except Exception as e:
                 logger.error(f"Error indexing page {page_number}: {str(e)}")
         
-        # 6. Update the processing status (in a real system, you'd store this in a database)
-        # Here we're just logging the completion
+        # 6. Update the file status in the database
+        db = get_db_session()
+        try:
+            # Create the metadata to save with the file
+            file_metadata = {
+                "pageCount": page_count,
+                "indexedPages": indexed_pages,
+                "contentLength": len(document_text),
+                "processedAt": datetime.datetime.now().isoformat()
+            }
+            
+            # Update the file status
+            success = False
+            if indexed_pages > 0:
+                # Update the file to completed status with metadata
+                file_obj = crud.update_file_status(db, file_id, "completed", file_metadata)
+                success = file_obj is not None
+                
+                # Update the user's usage statistics
+                if success:
+                    crud.update_pages_processed(db, user_id, page_count)
+                    logger.info(f"Updated usage statistics for user {user_id} with {page_count} pages")
+            else:
+                # If we failed to index any pages, mark as error
+                error_message = f"Failed to index any pages from the document"
+                file_obj = crud.update_file_status(db, file_id, "error", error_message=error_message)
+                success = file_obj is not None
+            
+            if success:
+                logger.info(f"Updated file status for {filename} to {file_obj.status}")
+            else:
+                logger.error(f"Failed to update file status for {filename}")
+        except Exception as e:
+            logger.error(f"Error updating file status: {str(e)}")
+        finally:
+            db.close()
+            
         logger.info(f"OCR processing completed for {filename}. Indexed {indexed_pages} of {page_count} pages.")
-        
-        # In a production system, you would update the status in a database
-        # For the current implementation, we don't have a database, but we can
-        # at least log the completion
     except Exception as e:
         logger.error(f"Error processing OCR job: {str(e)}")
 
@@ -833,144 +1076,42 @@ def processing_status(req: func.HttpRequest) -> func.HttpResponse:
     """Get the processing status of a file."""
     try:
         user_id = get_user_id(req)
-        file_id = req.route_params.get('file_id')
+        file_id_str = req.route_params.get('file_id')
         
         if not user_id:
             return create_error_response(400, "User ID is required in x-user-id header")
-        if not file_id:
+        if not file_id_str:
             return create_error_response(400, "File ID is required in route parameters")
+            
+        file_id = int(file_id_str)
         
-        # In a production environment, we would query a database for the status
-        # For this implementation, we'll check if the document has been indexed in AI Search
-        
-        # Get search service credentials
-        search_endpoint = os.environ.get('AZURE_AISEARCH_ENDPOINT')
-        search_api_key = os.environ.get('AZURE_AISEARCH_KEY')
-        search_index_name = os.environ.get('AZURE_AISEARCH_INDEX')
-        
-        if not search_endpoint or not search_api_key or not search_index_name:
-            logger.error("Missing Azure AI Search credentials")
-            return create_error_response(500, "Search service not configured")
-        
-        # Create the search client
-        from azure.search.documents import SearchClient
-        from azure.core.credentials import AzureKeyCredential
-        
-        search_client = SearchClient(
-            endpoint=search_endpoint,
-            index_name=search_index_name,
-            credential=AzureKeyCredential(search_api_key)
-        )
-        
-        # Search for documents with this file_id in metadata
-        # This is a filter, not a full text search
+        # Get file status from database
+        db = get_db_session()
         try:
-            # We're looking for documents where the metadata contains the file_id
-            results = search_client.search(
-                search_text="*",
-                filter=None,  # We can't filter on the JSON metadata field directly
-                select=["id", "metadata"],
-                top=100  # Get up to 100 pages (should be enough for most documents)
-            )
+            file = crud.get_file(db, file_id)
             
-            # Process results
-            pages_found = []
-            total_pages = 0
-            filename = None
-            
-            # Count pages and extract metadata
-            for result in results:
-                if "metadata" not in result:
-                    continue
-                    
-                try:
-                    metadata = json.loads(result["metadata"])
-                    # Check if this document is for our file_id and user_id
-                    if (metadata.get("file_id") == int(file_id) and 
-                        metadata.get("user_id") == user_id):
-                        
-                        # Add this page to our found pages
-                        page_number = metadata.get("pageNumber")
-                        if page_number:
-                            pages_found.append(page_number)
-                            
-                        # Update total pages if available
-                        if "totalPages" in metadata and metadata["totalPages"] > total_pages:
-                            total_pages = metadata["totalPages"]
-                            
-                        # Get filename if available
-                        if "filename" in metadata and not filename:
-                            filename = metadata["filename"]
-                except Exception as e:
-                    logger.warning(f"Error parsing metadata: {str(e)}")
-                    continue
-            
-            # Calculate status based on indexed pages
-            if not pages_found:
-                # No pages found - check if we can find the blob
-                try:
-                    # Get blob storage connection
-                    connection_string = os.environ.get('AzureWebJobsStorage')
-                    container_name = os.environ.get('STORAGE_CONTAINER_NAME', 'ocrlab-files')
-                    
-                    if connection_string:
-                        from azure.storage.blob import BlobServiceClient
-                        
-                        # Search blobs with user_id and file_id in the path
-                        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-                        container_client = blob_service_client.get_container_client(container_name)
-                        
-                        # List blobs with the user_id and file_id in the path
-                        user_folder = f"{user_id}/"
-                        blobs = list(container_client.list_blobs(name_starts_with=user_folder))
-                        
-                        for blob in blobs:
-                            # If we found a blob that might be our file
-                            if blob.name.startswith(user_folder):
-                                # The file exists but hasn't been indexed - processing in progress
-                                processing_data = {
-                                    "file_id": int(file_id),
-                                    "status": "processing",
-                                    "progress": 0,  # Just started
-                                    "error": None,
-                                    "started_at": datetime.datetime.now().isoformat(),
-                                    "completed_at": None,
-                                    "pages_processed": 0,
-                                    "total_pages": None  # Unknown at this stage
-                                }
-                                return func.HttpResponse(
-                                    body=json.dumps({"processing": processing_data}),
-                                    status_code=200,
-                                    mimetype="application/json"
-                                )
-                except Exception as e:
-                    logger.warning(f"Error checking blob storage: {str(e)}")
+            if not file:
+                return create_error_response(404, f"File with ID {file_id} not found")
                 
-                # No record of the file
-                return create_error_response(404, f"No processing record found for file ID {file_id}")
+            # Verify the file belongs to this user
+            if file.user_id != user_id:
+                return create_error_response(403, "You don't have permission to access this file")
             
-            # We found some indexed pages
-            pages_processed = len(pages_found)
-            progress = int(100 * pages_processed / total_pages) if total_pages > 0 else 0
+            # Extract metadata
+            metadata = file.file_metadata or {}
             
-            # Determine status
-            status = "processing"
-            completed_at = None
-            
-            if pages_processed >= total_pages:
-                status = "completed"
-                completed_at = datetime.datetime.now().isoformat()
-            
+            # Format the processing status response
             processing_data = {
-                "file_id": int(file_id),
-                "status": status,
-                "progress": progress,
-                "error": None,
-                "started_at": datetime.datetime.now().isoformat(),
-                "completed_at": completed_at,
-                "pages_processed": pages_processed,
-                "total_pages": total_pages,
-                "filename": filename
+                "file_id": file.id,
+                "name": file.name,
+                "status": file.status,
+                "progress": 100 if file.status == "completed" else (50 if file.status == "processing" else 0),
+                "error": file.error_message,
+                "started_at": file.created_at.isoformat() if file.created_at else None,
+                "completed_at": file.processed_at.isoformat() if file.processed_at else None,
+                "pages_processed": metadata.get("indexedPages", 0),
+                "total_pages": metadata.get("pageCount", 0),
+                "attempts": file.attempts
             }
             
             return func.HttpResponse(
@@ -978,28 +1119,8 @@ def processing_status(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=200,
                 mimetype="application/json"
             )
-            
-        except Exception as e:
-            logger.error(f"Error querying search index: {str(e)}")
-            
-            # Fallback to basic processing status if search query fails
-        processing_data = {
-            "file_id": int(file_id),
-                "status": "processing",
-                "progress": None,
-                "error": None,
-            "started_at": datetime.datetime.now().isoformat(),
-                "completed_at": None,
-                "pages_processed": None,
-                "total_pages": None,
-                "note": "Status tracking limited due to search query error"
-        }
-        
-        return func.HttpResponse(
-            body=json.dumps({"processing": processing_data}),
-            status_code=200,
-            mimetype="application/json"
-        )
+        finally:
+            db.close()
     except Exception as e:
         logger.error(f"Error retrieving processing status: {str(e)}")
         return create_error_response(500, f"Failed to retrieve processing status: {str(e)}")
