@@ -9,15 +9,58 @@ import datetime
 import base64
 from typing import Optional, List, Dict, Any
 import requests  # Add this import for making HTTP requests to Clerk API
+import sys
+import time
+import uuid
+import re
+import math
+from datetime import datetime, date
+import traceback
 
 # Import database modules
 from database.connection import get_db_session
 from database import crud
 from database.models import User, Folder, File, UsageStat
 
+# Import Azure Document Intelligence
+from azure.ai.documentintelligence import DocumentIntelligenceClient
+from azure.ai.documentintelligence.models import AnalyzeResult
+from azure.core.credentials import AzureKeyCredential
+from azure.core.exceptions import ResourceNotFoundError, ServiceRequestError
+
+# Azure Storage and Search
+from azure.storage.queue import QueueServiceClient
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('ocrlab')
+
+# Verify environment variables on startup
+def verify_environment_variables():
+    """Verify that all required environment variables are set."""
+    required_vars = [
+        'POSTGRES_CONNECTION_STRING',
+        'AzureWebJobsStorage',
+        'CLERK_API_KEY'
+    ]
+    
+    # Optional in mock mode, required in production
+    if os.environ.get('AzureWebJobsStorage') != "mock":
+        required_vars.extend([
+            'DOCUMENT_INTELLIGENCE_ENDPOINT',
+            'DOCUMENT_INTELLIGENCE_API_KEY'
+        ])
+    
+    missing_vars = [var for var in required_vars if not os.environ.get(var)]
+    
+    if missing_vars:
+        logger.warning(f"Missing required environment variables: {', '.join(missing_vars)}")
+        logger.warning("Some functionality may not work correctly without these variables.")
+    else:
+        logger.info("All required environment variables are set.")
+
+# Run verification on startup
+verify_environment_variables()
 
 # Create the function app
 app = func.FunctionApp()
@@ -61,8 +104,6 @@ def get_or_create_user(user_id: str, email: Optional[str] = None) -> Optional[Us
 def get_queue_client(queue_name="ocr-processing-queue"):
     """Get a queue client for the specified queue."""
     try:
-        from azure.storage.queue import QueueServiceClient
-        
         # Get connection string from environment variable
         connection_string = os.environ.get('AzureWebJobsStorage')
         if not connection_string:
@@ -354,230 +395,92 @@ def delete_folder(req: func.HttpRequest) -> func.HttpResponse:
         return create_error_response(500, f"Failed to delete folder: {str(e)}")
 
 # File Management Functions
-@app.route(route="upload", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+@app.function_name("UploadFile")
+@app.route(route="api/files", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
 def upload_file(req: func.HttpRequest) -> func.HttpResponse:
-    """Upload a file to Azure Blob Storage."""
+    """Handle file upload and queue it for OCR processing."""
     try:
+        # Extract user ID from request
         user_id = get_user_id(req)
-        folder_id_str = req.headers.get('x-folder-id')
-        
         if not user_id:
-            return create_error_response(400, "User ID is required in x-user-id header")
-        if not folder_id_str:
-            return create_error_response(400, "Folder ID is required in x-folder-id header")
+            return create_error_response(401, "Unauthorized: User ID not provided")
             
-        folder_id = int(folder_id_str)
+        # Parse request form data
+        req_body = req.get_json()
+        if not req_body:
+            return create_error_response(400, "Bad request: No form data provided")
         
-        # Get the file from the request
-        files = req.files.get('file')
-        if not files:
-            return create_error_response(400, "No file found in request")
+        folder_id = req_body.get('folder_id')
+        name = req_body.get('name')
+        mime_type = req_body.get('mime_type')
+        size_bytes = req_body.get('size_bytes')
+        sas_url = req_body.get('sas_url')  # SAS URL for the uploaded file
+        blob_path = req_body.get('blob_path')  # Path in blob storage
         
-        # Get the first file if multiple were uploaded
-        file = files[0] if isinstance(files, list) else files
-        
-        # Get file properties
-        filename = file.filename
-        content_type = file.content_type
-        file_contents = file.read()
-        file_size = len(file_contents)
-        
-        if file_size <= 0:
-            return create_error_response(400, "Empty file uploaded")
-        
-        # Get blob storage connection string from environment variable
-        connection_string = os.environ.get('AzureWebJobsStorage')
-        if not connection_string:
-            logger.error("Missing storage connection string")
-            return create_error_response(500, "Storage configuration error")
-        
-        # Create a unique blob name using user_id, folder_id and timestamp
-        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        blob_name = f"{user_id}/{folder_id}/{timestamp}_{filename}"
-        
-        # Handle mock mode for testing
-        if connection_string == "mock":
-            logger.info(f"Mock: File {filename} uploaded to blob storage")
-            blob_url = f"https://mock-storage.com/{blob_name}"
-            
-            # Get or create user
-            email = req.headers.get('x-user-email')
-            user = get_or_create_user(user_id, email)
-            if not user:
-                return create_error_response(500, "Failed to find or create user")
-            
-            # Save file to database
-            db = get_db_session()
-            try:
-                file_obj = crud.create_file(
-                    db, 
-                    filename, 
-                    user_id, 
-                    blob_url,
-                    file_size,
-                    content_type,
-                    folder_id
-                )
-                
-                # Add a message to the OCR processing queue
-                try:
-                    # Create a message with the file information
-                    message = {
-                        "file_id": file_obj.id,
-                        "user_id": user_id,
-                        "folder_id": folder_id,
-                        "blob_name": blob_name,
-                        "container_name": "mock-container",
-                        "filename": filename,
-                        "content_type": content_type,
-                        "size_bytes": file_size,
-                        "timestamp": datetime.datetime.now().isoformat()
-                    }
-                    
-                    # Get the queue client and send the message
-                    queue_client = get_queue_client()
-                    
-                    # Convert message to JSON string and encode as Base64 for Azure Functions compatibility
-                    message_json = json.dumps(message)
-                    message_bytes = message_json.encode('utf-8')
-                    message_base64 = base64.b64encode(message_bytes).decode('utf-8')
-                    
-                    # Send the Base64-encoded message
-                    queue_client.send_message(message_base64)
-                    
-                    # Update the file status to "processing"
-                    file_obj = crud.update_file_status(db, file_obj.id, "processing")
-                    
-                    logger.info(f"Added file {filename} to OCR processing queue")
-                except Exception as e:
-                    logger.error(f"Error adding to queue: {str(e)}")
-                    # Continue even if queue fails - we'll still return the file info
-                
-                # Convert file object to dictionary for JSON serialization
-                file_data = {
-                    "id": file_obj.id,
-                    "name": file_obj.name,
-                    "folder_id": file_obj.folder_id,
-                    "blob_path": file_obj.blob_path,
-                    "status": file_obj.status,
-                    "size_bytes": file_obj.size_bytes,
-                    "mime_type": file_obj.mime_type,
-                    "created_at": file_obj.created_at.isoformat() if file_obj.created_at else None,
-                    "updated_at": file_obj.updated_at.isoformat() if file_obj.updated_at else None
-                }
-                
-                return func.HttpResponse(
-                    body=json.dumps({"file": file_data}),
-                    status_code=201,
-                    mimetype="application/json"
-                )
-            finally:
-                db.close()
-        
-        # Upload to blob storage
-        from azure.storage.blob import BlobServiceClient, ContentSettings
-        
-        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-        container_name = os.environ.get('STORAGE_CONTAINER_NAME', 'ocrlab-files')
-        
-        # Create container if it doesn't exist
-        try:
-            container_client = blob_service_client.get_container_client(container_name)
-            if not container_client.exists():
-                container_client.create_container()
-        except Exception as e:
-            logger.error(f"Error creating container: {str(e)}")
-            return create_error_response(500, f"Failed to create storage container: {str(e)}")
-        
-        # Upload the file
-        blob_client = blob_service_client.get_blob_client(
-            container=container_name, 
-            blob=blob_name
-        )
-        
-        content_settings = ContentSettings(content_type=content_type)
-        blob_client.upload_blob(
-            file_contents,
-            overwrite=True,
-            content_settings=content_settings
-        )
-        
-        # Get the blob URL
-        blob_url = blob_client.url
+        if not all([name, blob_path]):
+            return create_error_response(400, "Bad request: Missing required fields")
         
         # Get or create user
-        email = req.headers.get('x-user-email')
-        user = get_or_create_user(user_id, email)
-        if not user:
-            return create_error_response(500, "Failed to find or create user")
-        
-        # Save file to database
         db = get_db_session()
         try:
-            file_obj = crud.create_file(
+            # Check user exists in DB
+            user = crud.get_user(db, user_id)
+            if not user:
+                return create_error_response(404, f"User not found: {user_id}")
+                
+            # Validate folder_id if provided
+            if folder_id:
+                folder = crud.get_folder(db, folder_id)
+                if not folder:
+                    return create_error_response(404, f"Folder not found: {folder_id}")
+                if folder.user_id != user_id:
+                    return create_error_response(403, "Unauthorized: You do not have access to this folder")
+            
+            # Create file record in database
+            file = crud.create_file(
                 db, 
-                filename, 
-                user_id, 
-                blob_url,
-                file_size,
-                content_type,
-                folder_id
+                name=name, 
+                folder_id=folder_id, 
+                user_id=user_id,
+                blob_path=blob_path,
+                size_bytes=size_bytes,
+                mime_type=mime_type,
+                status='queued'  # Initial status
             )
             
-            # Add a message to the OCR processing queue
-            try:
-                # Create a message with the file information
-                message = {
-                    "file_id": file_obj.id,
-                    "user_id": user_id,
-                    "folder_id": folder_id,
-                    "blob_name": blob_name,
-                    "container_name": container_name,
-                    "filename": filename,
-                    "content_type": content_type,
-                    "size_bytes": file_size,
-                    "timestamp": datetime.datetime.now().isoformat()
-                }
-                
-                # Get the queue client and send the message
-                queue_client = get_queue_client()
-                
-                # Convert message to JSON string and encode as Base64 for Azure Functions compatibility
-                message_json = json.dumps(message)
-                message_bytes = message_json.encode('utf-8')
-                message_base64 = base64.b64encode(message_bytes).decode('utf-8')
-                
-                # Send the Base64-encoded message
-                queue_client.send_message(message_base64)
-                
-                # Update the file status to "processing"
-                file_obj = crud.update_file_status(db, file_obj.id, "processing")
-                
-                logger.info(f"Added file {filename} to OCR processing queue")
-            except Exception as e:
-                logger.error(f"Error adding to queue: {str(e)}")
-                # Continue even if queue fails - we'll still return the file info
+            # Log file creation
+            logger.info(f"File {name} created with ID {file.id}")
             
-            # Convert file object to dictionary for JSON serialization
-            file_data = {
-                "id": file_obj.id,
-                "name": file_obj.name,
-                "folder_id": file_obj.folder_id,
-                "blob_path": file_obj.blob_path,
-                "status": file_obj.status,
-                "size_bytes": file_obj.size_bytes,
-                "mime_type": file_obj.mime_type,
-                "created_at": file_obj.created_at.isoformat() if file_obj.created_at else None,
-                "updated_at": file_obj.updated_at.isoformat() if file_obj.updated_at else None
+            # Queue file for OCR processing
+            queue_client = get_queue_client()
+            
+            # Prepare message
+            message = {
+                'file_id': file.id,
+                'user_id': user_id
             }
             
+            # Encode message as JSON
+            message_json = json.dumps(message)
+            
+            # Send message to queue
+            queue_client.send_message(message_json)
+            
+            # Return success response
             return func.HttpResponse(
-                body=json.dumps({"file": file_data}),
+                body=json.dumps({
+                    "id": file.id,
+                    "name": file.name,
+                    "folder_id": file.folder_id,
+                    "status": file.status,
+                    "created_at": file.created_at.isoformat() if file.created_at else None
+                }),
                 status_code=201,
                 mimetype="application/json"
             )
         finally:
-            db.close()
+            if 'db' in locals():
+                db.close()
     except Exception as e:
         logger.error(f"Error uploading file: {str(e)}")
         return create_error_response(500, f"Failed to upload file: {str(e)}")
@@ -875,210 +778,144 @@ def get_usage(req: func.HttpRequest) -> func.HttpResponse:
         logger.error(f"Error retrieving usage data: {str(e)}")
         return create_error_response(500, f"Failed to retrieve usage data: {str(e)}")
 
-# Queue Trigger for OCR Processing
+# OCR Processing Queue Function
 @app.function_name("ProcessOCRQueue")
-@app.queue_trigger(arg_name="msg", queue_name="ocr-processing-queue", 
-                  connection="AzureWebJobsStorage")
+@app.queue_trigger(arg_name="msg", queue_name="ocr-processing-queue", connection="AzureWebJobsStorage")
 def process_ocr_queue(msg: func.QueueMessage) -> None:
-    """Process OCR jobs from the queue."""
+    """
+    Process files from the OCR queue using Azure Document Intelligence.
+    
+    This function is triggered by messages in the ocr-processing-queue.
+    Each message should contain a JSON object with file_id and user_id.
+    """
     try:
-        # Parse the message content - no need to decode Base64 as Azure Functions does it automatically
+        # Get message data
         message_text = msg.get_body().decode('utf-8')
-        message = json.loads(message_text)
+        logger.info(f"Processing OCR queue message: {message_text}")
         
-        logger.info(f"Processing OCR job: {message}")
+        message_data = json.loads(message_text)
+        file_id = message_data.get('file_id')
+        user_id = message_data.get('user_id')
         
-        # Extract message data
-        file_id = message.get('file_id')
-        user_id = message.get('user_id')
-        blob_name = message.get('blob_name')
-        container_name = message.get('container_name')
-        filename = message.get('filename')
-        
-        if not all([file_id, user_id, blob_name, container_name]):
-            logger.error(f"Missing required fields in message: {message}")
+        if not file_id or not user_id:
+            logger.error(f"Invalid queue message: missing file_id or user_id: {message_text}")
             return
         
-        # 1. Get blob storage connection
-        connection_string = os.environ.get('AzureWebJobsStorage')
-        if not connection_string:
-            logger.error("Missing storage connection string")
-            return
-            
-        # 2. Download the file from blob storage
-        from azure.storage.blob import BlobServiceClient
-        
-        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
-        
-        # Create a temp file to store the downloaded document
-        import tempfile
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as temp_file:
-            temp_file_path = temp_file.name
-            download_stream = blob_client.download_blob()
-            temp_file.write(download_stream.readall())
-        
-        # 3. Process the document with Azure Document Intelligence
-        from azure.ai.documentintelligence import DocumentIntelligenceClient
-        from azure.core.credentials import AzureKeyCredential
-        
-        # Get Document Intelligence credentials from environment
-        di_endpoint = os.environ.get('AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT')
-        di_key = os.environ.get('AZURE_DOCUMENT_INTELLIGENCE_KEY')
-        
-        if not di_endpoint or not di_key:
-            logger.error("Missing Document Intelligence credentials")
-            os.unlink(temp_file_path)  # Clean up the temp file
-            return
-        
-        # Initialize the Document Intelligence Client
-        document_intelligence_client = DocumentIntelligenceClient(
-            endpoint=di_endpoint,
-            credential=AzureKeyCredential(di_key)
-        )
-        
-        # Process the document with layout analysis
-        with open(temp_file_path, "rb") as document_file:
-            logger.info(f"Starting OCR processing for file {filename}")
-            poller = document_intelligence_client.begin_analyze_document(
-                "prebuilt-layout", 
-                body=document_file
-            )
-            result = poller.result()
-        
-        # Log detailed information about the OCR result
-        logger.info(f"Document analysis complete for {filename}")
-        logger.info(f"Pages found: {len(result.pages)}")
-        
-        # Log first page details
-        if result.pages:
-            page = result.pages[0]
-            logger.info(f"First page details - Page number: {page.page_number}, Lines: {len(page.lines)}")
-            # Log first few lines of content
-            if page.lines and len(page.lines) > 0:
-                sample_content = "\n".join([line.content for line in page.lines[:5]])
-                logger.info(f"Sample content:\n{sample_content}")
-        else:
-            logger.warning(f"No pages found in document {filename}")
-        
-        # Clean up the temp file
-        os.unlink(temp_file_path)
-        
-        # 4. Extract text and content
-        document_text = ""
-        page_texts = {}
-        page_count = len(result.pages)
-        
-        # Process each page of the document
-        for page in result.pages:
-            page_number = page.page_number
-            
-            # Extract the text from lines
-            page_content = ""
-            for line in page.lines:
-                page_content += line.content + "\n"
-            
-            page_texts[page_number] = page_content
-            document_text += page_content + "\n\n"
-        
-        # 5. Index each page in the search service
-        from azure.search.documents import SearchClient
-        from azure.core.credentials import AzureKeyCredential
-        
-        # Get Azure Search credentials from environment
-        search_endpoint = os.environ.get('AZURE_AISEARCH_ENDPOINT')
-        search_api_key = os.environ.get('AZURE_AISEARCH_KEY')
-        search_index_name = os.environ.get('AZURE_AISEARCH_INDEX')
-        
-        if not search_endpoint or not search_api_key or not search_index_name:
-            logger.error("Missing Azure AI Search credentials")
-            return
-        
-        # Create the search client
-        search_client = SearchClient(
-            endpoint=search_endpoint,
-            index_name=search_index_name,
-            credential=AzureKeyCredential(search_api_key)
-        )
-        
-        # Index each page
-        indexed_pages = 0
-        for page_number, page_content in page_texts.items():
-            if not page_content.strip():
-                logger.warning(f"Empty content for page {page_number}, skipping indexing")
-                continue
-                
-            # Create a unique document ID
-            document_id = f"{user_id}-{file_id}-{page_number}"
-            
-            # Create metadata
-            metadata = {
-                "user_id": user_id,
-                "file_id": file_id,
-                "filename": filename,
-                "pageNumber": page_number,
-                "totalPages": page_count,
-                "blobUrl": blob_client.url,
-            }
-            
-            # Create the search document
-            search_document = {
-                "id": document_id,
-                "content": page_content,
-                "metadata": json.dumps(metadata)
-            }
-            
-            # Index the document
-            try:
-                result = search_client.upload_documents(documents=[search_document])
-                if result[0].succeeded:
-                    indexed_pages += 1
-                    logger.info(f"Indexed page {page_number} of {filename}")
-                else:
-                    logger.error(f"Failed to index page {page_number}: {result[0].error_message}")
-            except Exception as e:
-                logger.error(f"Error indexing page {page_number}: {str(e)}")
-        
-        # 6. Update the file status in the database
+        # Get file from database
         db = get_db_session()
         try:
-            # Create the metadata to save with the file
-            file_metadata = {
-                "pageCount": page_count,
-                "indexedPages": indexed_pages,
-                "contentLength": len(document_text),
-                "processedAt": datetime.datetime.now().isoformat()
-            }
+            file = crud.get_file(db, file_id)
             
-            # Update the file status
-            success = False
-            if indexed_pages > 0:
-                # Update the file to completed status with metadata
-                file_obj = crud.update_file_status(db, file_id, "completed", file_metadata)
-                success = file_obj is not None
+            if not file:
+                logger.error(f"File not found: {file_id}")
+                return
+        
+            # Update file status to processing
+            file = crud.update_file(db, file_id, {
+                'status': 'processing',
+                'attempts': file.attempts + 1,
+                'last_attempt_at': datetime.datetime.utcnow()
+            })
+            
+            # Get blob URL with SAS token
+            from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+            from datetime import datetime, timedelta
+            
+            # Get connection string from environment variable
+            connection_string = os.environ.get('AzureWebJobsStorage')
+            
+            # Check if we're in mock mode for testing
+            if connection_string == "mock":
+                # Mock processing for testing
+                logger.info(f"Mock: Processing OCR for file {file_id}")
                 
-                # Update the user's usage statistics
-                if success:
-                    crud.update_pages_processed(db, user_id, page_count)
-                    logger.info(f"Updated usage statistics for user {user_id} with {page_count} pages")
-            else:
-                # If we failed to index any pages, mark as error
-                error_message = f"Failed to index any pages from the document"
-                file_obj = crud.update_file_status(db, file_id, "error", error_message=error_message)
-                success = file_obj is not None
+                # Create mock result
+                ocr_result = {
+                    "text": f"Mock OCR content for file {file_id}",
+                    "tables": [{"row_count": 2, "column_count": 2, "cells": []}],
+                    "pages": [{"page_number": 1, "width": 8.5, "height": 11.0}],
+                    "page_count": 1,
+                    "images": []
+                }
+                
+                # Update file with mock results
+                file = crud.update_file(db, file_id, {
+                    'status': 'complete',
+                    'processed_at': datetime.utcnow(),
+                    'file_metadata': {
+                        'ocr_result': ocr_result,
+                        'page_count': 1,
+                        'chunks': ['Mock OCR content for file ' + str(file_id)]
+                    }
+                })
+                
+                # Update usage stats
+                crud.update_usage_stats(db, user_id, datetime.utcnow().date(), 1, 0, 0)
+                
+                logger.info(f"Mock: OCR processing completed for file {file_id}")
+                return
             
-            if success:
-                logger.info(f"Updated file status for {filename} to {file_obj.status}")
-            else:
-                logger.error(f"Failed to update file status for {filename}")
+            # Get blob service client
+            blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+            
+            # Get container and blob name from file.blob_path
+            blob_path = file.blob_path
+            container_name, blob_name = blob_path.split('/', 1)
+            
+            # Get blob client
+            blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+            
+            # Generate SAS token for blob
+            sas_token = generate_blob_sas(
+                account_name=blob_client.account_name,
+                container_name=container_name,
+                blob_name=blob_name,
+                account_key=blob_service_client.credential.account_key,
+                permission=BlobSasPermissions(read=True),
+                expiry=datetime.utcnow() + timedelta(hours=1)
+            )
+            
+            # Create blob URL with SAS token
+            blob_url = f"{blob_client.url}?{sas_token}"
+            
+            # Process document with Azure Document Intelligence
+            analyze_result = process_document(blob_url)
+            
+            # Extract content from analyze result
+            ocr_result = extract_document_content(analyze_result)
+            
+            # Chunk text for vector database
+            text_chunks = chunk_text(ocr_result['text'])
+            
+            # Update file with OCR results
+            file = crud.update_file(db, file_id, {
+                'status': 'complete',
+                'processed_at': datetime.utcnow(),
+                'file_metadata': {
+                    'ocr_result': ocr_result,
+                    'page_count': ocr_result['page_count'],
+                    'chunks': text_chunks
+                }
+            })
+            
+            # Update usage stats
+            crud.update_usage_stats(db, user_id, datetime.utcnow().date(), ocr_result['page_count'], 0, 0)
+            
+            logger.info(f"OCR processing completed for file {file_id}")
         except Exception as e:
-            logger.error(f"Error updating file status: {str(e)}")
-        finally:
-            db.close()
+            logger.error(f"Error processing OCR for file {file_id}: {str(e)}")
             
-        logger.info(f"OCR processing completed for {filename}. Indexed {indexed_pages} of {page_count} pages.")
+            # Update file status to error
+            if 'file' in locals() and file:
+                crud.update_file(db, file_id, {
+                    'status': 'error',
+                    'error_message': str(e)
+                })
+        finally:
+            if 'db' in locals():
+                db.close()
     except Exception as e:
-        logger.error(f"Error processing OCR job: {str(e)}")
+        logger.error(f"Error processing OCR queue message: {str(e)}")
 
 # Document Indexing Functions
 @app.route(route="index", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
@@ -1236,3 +1073,266 @@ def processing_status(req: func.HttpRequest) -> func.HttpResponse:
     except Exception as e:
         logger.error(f"Error retrieving processing status: {str(e)}")
         return create_error_response(500, f"Failed to retrieve processing status: {str(e)}")
+
+# Helper functions for Azure Document Intelligence
+def get_document_intelligence_client():
+    """Create Azure Document Intelligence client."""
+    try:
+        # Get API key and endpoint from environment variables
+        endpoint = os.environ.get("DOCUMENT_INTELLIGENCE_ENDPOINT")
+        api_key = os.environ.get("DOCUMENT_INTELLIGENCE_API_KEY")
+        
+        if not endpoint or not api_key:
+            logger.error("Missing Document Intelligence configuration")
+            raise ValueError("Document Intelligence not properly configured")
+            
+        # Create client
+        credential = AzureKeyCredential(api_key)
+        client = DocumentIntelligenceClient(endpoint, credential)
+        return client
+    except Exception as e:
+        logger.error(f"Error creating Document Intelligence client: {str(e)}")
+        raise
+
+def process_document(blob_url: str, model: str = "prebuilt-layout"):
+    """
+    Process a document using Azure Document Intelligence.
+    
+    Args:
+        blob_url: The SAS URL to the document in Azure Blob Storage
+        model: The model to use (prebuilt-layout, prebuilt-document, etc.)
+        
+    Returns:
+        AnalyzeResult: The result of the document analysis
+    """
+    try:
+        client = get_document_intelligence_client()
+        
+        # Check if we're in mock mode for testing
+        if os.environ.get('AzureWebJobsStorage') == "mock":
+            logger.info(f"Mock: Processing document at {blob_url}")
+            # Return mock data for testing
+            return {
+                "content": "This is mock OCR content for testing.",
+                "tables": [{"rowCount": 2, "columnCount": 2, "cells": []}],
+                "pages": [{"pageNumber": 1, "width": 8.5, "height": 11.0}]
+            }
+            
+        # Start the document analysis process using the new method
+        # Use AnalyzeDocumentRequest with url_source parameter
+        from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
+        
+        # Create the request with url_source parameter
+        request = AnalyzeDocumentRequest(url_source=blob_url)
+        
+        # Call begin_analyze_document with the request
+        poller = client.begin_analyze_document(model, body=request)
+        result = poller.result()
+        
+        return result
+    except ResourceNotFoundError as e:
+        logger.error(f"Document not found: {str(e)}")
+        raise
+    except ServiceRequestError as e:
+        logger.error(f"Service request error: {str(e)}")
+        raise
+    except Exception as e:
+        logger.error(f"Error processing document: {str(e)}")
+        raise
+
+def extract_document_content(analyze_result):
+    """
+    Extract content from Document Intelligence analyze result.
+    
+    Args:
+        analyze_result: The result from Azure Document Intelligence
+        
+    Returns:
+        dict: Extracted content including text, tables, and images
+    """
+    try:
+        # For mock data
+        if isinstance(analyze_result, dict) and "content" in analyze_result:
+            return {
+                "text": analyze_result["content"],
+                "tables": analyze_result.get("tables", []),
+                "pages": analyze_result.get("pages", []),
+                "page_count": len(analyze_result.get("pages", [])),
+                "images": []
+            }
+            
+        # Extract full text content
+        text = analyze_result.content
+        
+        # Extract tables
+        tables = []
+        for table in analyze_result.tables:
+            table_data = {
+                "row_count": table.row_count,
+                "column_count": table.column_count,
+                "cells": []
+            }
+            
+            # Process cells
+            for cell in table.cells:
+                cell_data = {
+                    "row_index": cell.row_index,
+                    "column_index": cell.column_index,
+                    "row_span": cell.row_span,
+                    "column_span": cell.column_span,
+                    "content": cell.content
+                }
+                table_data["cells"].append(cell_data)
+                
+            tables.append(table_data)
+            
+        # Extract page information
+        pages = []
+        for page in analyze_result.pages:
+            page_data = {
+                "page_number": page.page_number,
+                "width": page.width,
+                "height": page.height,
+                "unit": page.unit,
+                "lines": []
+            }
+            
+            # Extract lines if available
+            if hasattr(page, "lines"):
+                for line in page.lines:
+                    line_data = {
+                        "content": line.content,
+                        "bounding_box": line.polygon if hasattr(line, "polygon") else None
+                    }
+                    page_data["lines"].append(line_data)
+                    
+            pages.append(page_data)
+            
+        # Extract images (if available)
+        images = []
+        if hasattr(analyze_result, "images") and analyze_result.images:
+            for img in analyze_result.images:
+                image_data = {
+                    "page_number": getattr(img, "page_number", None),
+                    "bounding_box": getattr(img, "bounding_box", None),
+                    # Add any additional image metadata
+                }
+                images.append(image_data)
+        
+        return {
+            "text": text,
+            "tables": tables,
+            "pages": pages,
+            "page_count": len(pages),
+            "images": images
+        }
+    except Exception as e:
+        logger.error(f"Error extracting document content: {str(e)}")
+        raise
+
+def chunk_text(text, max_chunk_size=1000, overlap=100):
+    """
+    Split text into overlapping chunks for vector database storage.
+    
+    Args:
+        text: The text to chunk
+        max_chunk_size: Maximum characters per chunk
+        overlap: Number of characters of overlap between chunks
+        
+    Returns:
+        list: List of text chunks
+    """
+    if not text:
+        return []
+        
+    chunks = []
+    start = 0
+    
+    while start < len(text):
+        # Define end position for this chunk
+        end = min(start + max_chunk_size, len(text))
+        
+        # If we're not at the end of the text, try to break at a sentence
+        if end < len(text):
+            # Look for sentence boundaries (., !, ?) followed by space
+            for delimiter in [". ", "! ", "? "]:
+                last_delimiter = text.rfind(delimiter, start, end)
+                if last_delimiter != -1:
+                    end = last_delimiter + 2  # Include the delimiter and space
+                    break
+                    
+        chunks.append(text[start:end])
+        
+        # Move start position with overlap
+        start = end - overlap if end - overlap > start else end
+        
+    return chunks
+
+# Timer-triggered retry function for failed OCR jobs
+@app.function_name("RetryFailedOCRJobs")
+@app.timer_trigger(schedule="0 */15 * * * *", arg_name="myTimer", run_on_startup=False)
+def retry_failed_ocr_jobs(myTimer: func.TimerRequest) -> None:
+    """
+    Periodically checks for failed OCR jobs and retries them.
+    Runs every 15 minutes and looks for files with 'error' status
+    and less than MAX_RETRY_ATTEMPTS attempts.
+    """
+    MAX_RETRY_ATTEMPTS = 3
+    MAX_AGE_HOURS = 24  # Don't retry files older than this
+    
+    if myTimer.past_due:
+        logger.info('Retry timer is past due')
+    
+    logger.info('Checking for failed OCR jobs to retry')
+    
+    try:
+        # Get files with error status that haven't exceeded max attempts
+        db = get_db_session()
+        try:
+            # Calculate the cutoff time (don't retry files older than MAX_AGE_HOURS)
+            cutoff_time = datetime.datetime.utcnow() - datetime.timedelta(hours=MAX_AGE_HOURS)
+            
+            # Get failed files from database
+            failed_files = crud.get_failed_files(db, max_attempts=MAX_RETRY_ATTEMPTS, cutoff_time=cutoff_time)
+            
+            if not failed_files:
+                logger.info("No failed OCR jobs to retry")
+                return
+                
+            logger.info(f"Found {len(failed_files)} failed OCR jobs to retry")
+            
+            # Get the queue client
+            queue_client = get_queue_client()
+            
+            # Retry each file
+            for file in failed_files:
+                logger.info(f"Queuing retry for file {file.id}: attempt {file.attempts + 1} of {MAX_RETRY_ATTEMPTS}")
+                
+                # Send message to OCR processing queue
+                message = {
+                    'file_id': file.id,
+                    'user_id': file.user_id,
+                    'retry': True,
+                    'attempt': file.attempts + 1
+                }
+                
+                # Update file status to indicate it's being retried
+                crud.update_file(db, file.id, {
+                    'status': 'queued',
+                    'error_message': f"Previous error: {file.error_message}. Retrying job."
+                })
+                
+                # Encode message as JSON and send to queue
+                message_json = json.dumps(message)
+                queue_client.send_message(message_json)
+                
+                logger.info(f"Requeued file {file.id} for OCR processing")
+            
+            logger.info(f"Retry job completed: queued {len(failed_files)} files for reprocessing")
+        except Exception as e:
+            logger.error(f"Error retrying failed OCR jobs: {str(e)}")
+        finally:
+            if 'db' in locals():
+                db.close()
+    except Exception as e:
+        logger.error(f"Error in retry timer function: {str(e)}")

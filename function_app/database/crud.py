@@ -423,4 +423,23 @@ def get_usage_stats_by_user(db: Session, user_id: str, start_date: date, end_dat
         UsageStat.user_id == user_id,
         UsageStat.date >= start_date,
         UsageStat.date <= end_date
-    ).order_by(UsageStat.date).all() 
+    ).order_by(UsageStat.date).all()
+
+def get_failed_files(db, max_attempts=3, cutoff_time=None):
+    """
+    Get files with error status for retry processing.
+    
+    Args:
+        db: Database session
+        max_attempts: Maximum number of retry attempts
+        cutoff_time: Don't retry files created before this time
+        
+    Returns:
+        List of File objects that need to be retried
+    """
+    query = db.query(File).filter(File.status == 'error', File.attempts < max_attempts)
+    
+    if cutoff_time:
+        query = query.filter(File.created_at > cutoff_time)
+        
+    return query.all() 

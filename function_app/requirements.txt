@@ -11,6 +11,6 @@ python-multipart>=0.0.6
 azure-identity>=1.14.0,<2.0.0
 opencensus-ext-azure>=1.1.9,<2.0.0
 opencensus-ext-logging>=0.1.0,<0.2.0
-azure-ai-documentintelligence
+azure-ai-documentintelligence>=1.0.0
 sqlalchemy>=2.0.0,<3.0.0
 requests>=2.31.0,<3.0.0

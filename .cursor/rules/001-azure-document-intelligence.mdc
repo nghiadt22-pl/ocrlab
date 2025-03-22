@@ -5,7 +5,7 @@ alwaysApply: false
 ---
 # Azure Document Intelligence Usage
 
-<version>1.0.0</version>
+<version>1.1.0</version>
 
 ## Context
 - When working with document processing in Azure
@@ -17,6 +17,8 @@ alwaysApply: false
 - Follow the official migration guide when updating existing code
 - Use the appropriate client classes and methods from the new SDK
 - Always include the required `body` parameter when calling `begin_analyze_document`
+- For URL-based documents, use `url_source` parameter in AnalyzeDocumentRequest, not `DocumentUrl`
+- Never use deprecated methods like `begin_analyze_document_from_url`
 
 ## Migration Notes
 - `FormRecognizerClient` → `DocumentIntelligenceClient`
@@ -24,15 +26,36 @@ alwaysApply: false
 - `begin_analyze_document` → `begin_analyze_document`
 - Import from `azure.ai.documentintelligence` instead of `azure.ai.formrecognizer`
 - The `begin_analyze_document` method requires a `body` parameter (can be AnalyzeBatchDocumentsRequest, JSON, or IO[bytes])
+- ⚠️ For URL documents: Use `AnalyzeDocumentRequest(url_source=url)` instead of `DocumentUrl`
+- ⚠️ DEPRECATED: Do not use `begin_analyze_document_from_url`, use `begin_analyze_document` with proper request object instead
 
 ## Examples
 
 <example>
-# Correct usage with latest SDK
-from azure.ai.documentintelligence import DocumentIntelligenceClient
+# Correct usage with latest SDK - URL source
 from azure.core.credentials import AzureKeyCredential
+from azure.ai.documentintelligence import DocumentIntelligenceClient
+from azure.ai.documentintelligence.models import AnalyzeDocumentRequest, AnalyzeResult
 
 # Initialize the Document Intelligence Client
+document_intelligence_client = DocumentIntelligenceClient(
+    endpoint="https://your-endpoint.cognitiveservices.azure.com/",
+    credential=AzureKeyCredential("your-api-key")
+)
+
+# Analyze a document from URL - CORRECT APPROACH
+url = "https://example.com/sample.pdf"
+poller = document_intelligence_client.begin_analyze_document(
+    "prebuilt-layout", 
+    body=AnalyzeDocumentRequest(url_source=url)
+)
+result = poller.result()
+</example>
+
+<example>
+# Correct usage with latest SDK - file content
+from azure.core.credentials import AzureKeyCredential
+from enceitialize the Document Intelligence Client
 document_intelligence_client = DocumentIntelligenceClient(
     endpoint="https://your-endpoint.cognitiveservices.azure.com/",
     credential=AzureKeyCredential("your-api-key")
@@ -48,21 +71,43 @@ with open("sample.pdf", "rb") as document_file:
 </example>
 
 <example type="invalid">
-# Incorrect usage with deprecated SDK
-from azure.ai.formrecognizer import FormRecognizerClient
+# INCORRECT usage with deprecated method
+from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.core.credentials import AzureKeyCredential
 
-# Initialize the Form Recognizer Client (DEPRECATED)
-form_recognizer_client = FormRecognizerClient(
+# Initialize the client
+client = DocumentIntelligenceClient(
     endpoint="https://your-endpoint.cognitiveservices.azure.com/",
     credential=AzureKeyCredential("your-api-key")
 )
 
-# Analyze a document using deprecated method
-poller = form_recognizer_client.begin_recognize_content(document=open("sample.pdf", "rb"))
+# INCORRECT: Using deprecated method
+url = "https://example.com/sample.pdf"
+poller = client.begin_analyze_document_from_url("prebuilt-layout", url)
+result = poller.result()
+</example>
+
+<example type="invalid">
+# INCORRECT usage with DocumentUrl
+from azure.ai.documentintelligence import DocumentIntelligenceClient
+from azure.ai.documentintelligence.models import AnalyzeDocumentRequest, DocumentUrl
+from azure.core.credentials import AzureKeyCredential
+
+# Initialize the client
+client = DocumentIntelligenceClient(
+    endpoint="https://your-endpoint.cognitiveservices.azure.com/",
+    credential=AzureKeyCredential("your-api-key")
+)
+
+# INCORRECT: Using DocumentUrl instead of url_source
+url = "https://example.com/sample.pdf"
+document_url = DocumentUrl(url=url)
+request = AnalyzeDocumentRequest(url=document_url)  # Wrong parameter name
+poller = client.begin_analyze_document("prebuilt-layout", body=request)
 result = poller.result()
 </example>
 
 ## Reference
 - [Official Migration Guide](mdc:https:/github.com/Azure/azure-sdk-for-python/blob/main/sdk/documentintelligence/azure-ai-documentintelligence/MIGRATION_GUIDE.md)
-- [Azure Document Intelligence Documentation](mdc:https:/learn.microsoft.com/en-us/azure/ai-services/document-intelligence) 
+- [Azure Document Intelligence Documentation](mdc:https:/learn.microsoft.com/en-us/azure/ai-services/document-intelligence)
+- [Latest SDK Reference](mdc:https:/learn.microsoft.com/en-us/python/api/overview/azure/ai-documentintelligence-readme) 

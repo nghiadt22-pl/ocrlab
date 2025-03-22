@@ -30,6 +30,7 @@ dist-ssr
 
 function_app/.env
 function_app/.env.production
+function_app/integration_tests/.env
 
 function_app/local.settings.json
 
