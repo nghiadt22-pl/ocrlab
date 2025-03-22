@@ -1,6 +1,6 @@
 ---
 description: 
-globs: function_app/**/*.py,function_app/*.py
+globs: 
 alwaysApply: false
 ---
 # Azure Document Intelligence Usage
@@ -64,5 +64,5 @@ result = poller.result()
 </example>
 
 ## Reference
-- [Official Migration Guide](mdc:https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/documentintelligence/azure-ai-documentintelligence/MIGRATION_GUIDE.md)
-- [Azure Document Intelligence Documentation](mdc:https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence) 
+- [Official Migration Guide](mdc:https:/github.com/Azure/azure-sdk-for-python/blob/main/sdk/documentintelligence/azure-ai-documentintelligence/MIGRATION_GUIDE.md)
+- [Azure Document Intelligence Documentation](mdc:https:/learn.microsoft.com/en-us/azure/ai-services/document-intelligence) 

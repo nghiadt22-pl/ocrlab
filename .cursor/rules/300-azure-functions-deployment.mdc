@@ -1,6 +1,6 @@
 ---
 description: 
-globs: function_app/**/*.py
+globs: 
 alwaysApply: false
 ---
 # Azure Functions Deployment Commands

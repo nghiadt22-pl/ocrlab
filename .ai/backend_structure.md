@@ -10,6 +10,7 @@ The OCR Lab backend is divided into several core layers:
 2. **Business Logic & Services** – Services that handle specific tasks such as document ingestion, OCR processing, file status tracking, and usage logging.  
 3. **External Integrations** – Services provided by Azure (Blob Storage, Queue, Document Intelligence), Postgres, and authentication providers (Clerk).  
 4. **Database & Storage** – A Postgres database for metadata and usage stats, plus Azure Blob Storage for the actual PDF files and Azure AI Search for semantic embeddings.
+5. **Background Services** – Timer-triggered functions that handle automated tasks like Clerk user synchronization with PostgreSQL.
 
 ---
 
@@ -47,6 +48,7 @@ Include connection logic in `db/database.py` (Python) or a dedicated Node servic
 
 1. **Middleware**  that checks the incoming request headers for a valid authentication token.  
 2. **API Key** approach (optional) if you allow external integrations to query the system programmatically.  
+3. **Database Synchronization** through an automated timer-triggered function that keeps Clerk user data in sync with the PostgreSQL database every 15 seconds.
 
 Ensure each protected endpoint checks the user's identity (or API key) and confirms they have permissions to access or manipulate a given file or folder. You can store user claims or minimal user metadata in Postgres if your logic requires cross-referencing usage or folder ownership.
 
@@ -73,7 +75,27 @@ Ensure each protected endpoint checks the user's identity (or API key) and confi
 
 ---
 
-## 6. Usage Tracking
+## 6. Background Services
+
+The application includes several timer-triggered Azure Functions that perform scheduled tasks:
+
+1. **Clerk User Synchronization**
+   - Runs every 15 seconds via a TimeTrigger
+   - Fetches all users from the Clerk API
+   - Creates new users or updates existing users in the PostgreSQL database
+   - Ensures user data consistency between Clerk and the application database
+
+2. **Failed Job Cleanup** (optional)
+   - Periodically checks for stalled or failed processing jobs
+   - Requeues or marks them as failed after a certain threshold
+
+3. **Usage Reporting** (optional)
+   - Generates periodic usage reports or statistics
+   - Can be used for administrative monitoring or billing purposes
+
+---
+
+## 7. Usage Tracking
 
 Once a document is processed or a search query is made, the backend records usage metrics in Postgres:
 - **Pages processed**: Summed based on what Azure Document Intelligence reports.  
@@ -83,7 +105,7 @@ If there is a free tier limit, the system checks each user's usage count before 
 
 ---
 
-## 7. Security and Secrets Management
+## 8. Security and Secrets Management
 
 To prevent unauthorized data access or credential leaks:
 
@@ -94,21 +116,22 @@ To prevent unauthorized data access or credential leaks:
 
 ---
 
-## 8. Deployment Considerations
+## 9. Deployment Considerations
 
 - **Azure Functions**: Each route or service can be defined as a function. The queue trigger can handle file processing.  
 - **Continuous Integration/Deployment**: Use GitHub Actions to automate testing and deployment.
 
 ---
 
-## 9. Summary
+## 10. Summary
 
 The OCR Lab backend revolves around a clear division of responsibility:
 
 1. **API Layer** for incoming requests and route definitions.  
 2. **Business Logic** in dedicated services handling OCR, queue ingestion, search, and usage tracking.  
 3. **Data Layer** with Postgres for metadata and usage, Azure Blob for file storage, and Azure AI Search for vector embeddings.  
-4. **Authentication** via Clerk tokens or API keys.  
-5. **Security** through robust secrets management and environment variables.
+4. **Authentication** via Clerk tokens or API keys, with automated synchronization to PostgreSQL.
+5. **Background Services** for automated tasks like user synchronization and maintenance.
+6. **Security** through robust secrets management and environment variables.
 
 By following this structure, each component remains loosely coupled yet integrated for a cohesive system. Maintenance becomes more straightforward, and scaling individual pieces (like the OCR microservice or the search service) is simpler.

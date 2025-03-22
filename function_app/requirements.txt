@@ -13,3 +13,4 @@ opencensus-ext-azure>=1.1.9,<2.0.0
 opencensus-ext-logging>=0.1.0,<0.2.0
 azure-ai-documentintelligence
 sqlalchemy>=2.0.0,<3.0.0
+requests>=2.31.0,<3.0.0

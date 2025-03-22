@@ -8,6 +8,7 @@ import azure.functions as func
 import datetime
 import base64
 from typing import Optional, List, Dict, Any
+import requests  # Add this import for making HTTP requests to Clerk API
 
 # Import database modules
 from database.connection import get_db_session
@@ -105,6 +106,117 @@ def get_queue_client(queue_name="ocr-processing-queue"):
     except Exception as e:
         logger.error(f"Error getting queue client: {str(e)}")
         raise
+
+# Helper function to get Clerk API key from environment variables
+def get_clerk_api_key():
+    """Get the Clerk API key from environment variables."""
+    api_key = os.environ.get('CLERK_API_KEY')
+    if not api_key:
+        logger.error("Missing Clerk API key")
+        raise ValueError("Clerk API key not configured")
+    return api_key
+
+# Clerk API helper
+def get_users_from_clerk():
+    """Fetch all users from Clerk API."""
+    try:
+        api_key = get_clerk_api_key()
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # Clerk API URL for listing users
+        url = "https://api.clerk.dev/v1/users"
+        
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            logger.error(f"Failed to fetch users from Clerk: {response.status_code} - {response.text}")
+            return []
+        
+        data = response.json()
+        # Check if the response is already a list or a dict with a 'data' key
+        if isinstance(data, list):
+            return data
+        elif isinstance(data, dict) and 'data' in data:
+            return data.get('data', [])
+        else:
+            logger.warning(f"Unexpected response format from Clerk API: {type(data)}")
+            return []
+    except Exception as e:
+        logger.error(f"Error fetching users from Clerk: {str(e)}")
+        return []
+
+# TimeTrigger function to sync Clerk users with database
+@app.function_name("ClerkSyncTimer")
+@app.timer_trigger(schedule="*/15 * * * * *", arg_name="myTimer", run_on_startup=True)
+def clerk_sync_timer(myTimer: func.TimerRequest) -> None:
+    """
+    Syncs Clerk users with PostgreSQL database every 15 seconds.
+    This ensures our database stays in sync with Clerk's user management.
+    """
+    if myTimer.past_due:
+        logger.info('Clerk sync timer is past due')
+    
+    logger.info('Clerk sync timer triggered')
+    
+    try:
+        # Get users from Clerk
+        clerk_users = get_users_from_clerk()
+        
+        if not clerk_users:
+            logger.info('No users found in Clerk or error occurred')
+            return
+        
+        # Sync users with database
+        db = get_db_session()
+        try:
+            # Count of users processed
+            created_count = 0
+            updated_count = 0
+            
+            for user in clerk_users:
+                # Extract user data from Clerk response
+                user_id = user.get('id')
+                
+                # Get the primary email address
+                email = None
+                email_addresses = user.get('email_addresses', [])
+                for email_obj in email_addresses:
+                    if email_obj.get('id') and email_obj.get('email_address'):
+                        if email_obj.get('primary', False):
+                            email = email_obj.get('email_address')
+                            break
+                        elif not email:  # Use the first email if no primary is found
+                            email = email_obj.get('email_address')
+                
+                if not user_id or not email:
+                    logger.warning(f"Incomplete user data from Clerk: id={user_id}, email={email}")
+                    continue
+                
+                # Check if user exists in our database
+                existing_user = crud.get_user(db, user_id)
+                
+                if existing_user:
+                    # Update user data if needed
+                    if existing_user.email != email:
+                        existing_user.email = email
+                        existing_user.updated_at = datetime.datetime.utcnow()
+                        db.commit()
+                        updated_count += 1
+                else:
+                    # Create new user
+                    crud.create_user(db, user_id, email)
+                    created_count += 1
+            
+            logger.info(f"Clerk sync completed: {created_count} users created, {updated_count} users updated")
+        except Exception as e:
+            logger.error(f"Error syncing users with database: {str(e)}")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error in Clerk sync timer: {str(e)}")
 
 # Folder Management Functions
 @app.route(route="folders", auth_level=func.AuthLevel.ANONYMOUS, methods=["GET"])

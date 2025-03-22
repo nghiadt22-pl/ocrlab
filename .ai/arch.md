@@ -25,6 +25,8 @@ graph TD
     OCRService --> DB
     OCRService --> VectorDB
     API --> Billing[HitPay Billing - Optional]
+    ClerkSync[Clerk Sync Timer Trigger] --> Auth
+    ClerkSync --> DB
 ```
 
 ### Component Breakdown
@@ -39,6 +41,7 @@ graph TD
    - Azure Functions for serverless API endpoints
    - Python-based microservices for OCR processing
    - REST API for file/folder management and search
+   - Timer-triggered functions for background tasks
 
 3. **Storage & Database**
    - Azure Blob Storage for PDF file storage
@@ -49,11 +52,17 @@ graph TD
    - Clerk for user authentication and management
    - API key authentication for external clients
    - Secure data transmission with HTTPS
+   - Automated user synchronization between Clerk and PostgreSQL
 
 5. **Processing Pipeline**
    - Azure Queue for asynchronous processing
    - Azure Document Intelligence for OCR extraction
    - Vector embedding generation for semantic search
+
+6. **Background Services**
+   - Timer-triggered Azure Functions for scheduled tasks
+   - User synchronization between Clerk and PostgreSQL
+   - Maintenance and cleanup processes
 
 ## Detailed Architecture
 
@@ -290,6 +299,49 @@ sequenceDiagram
     Frontend->>User: Display results
 ```
 
+### Background Services
+
+The application includes several background services implemented as timer-triggered Azure Functions:
+
+1. **Clerk User Synchronization**
+   - Runs every 15 seconds via a TimeTrigger
+   - Fetches users from Clerk's API
+   - Creates or updates users in PostgreSQL database
+   - Maintains consistency between authentication system and application database
+
+```mermaid
+sequenceDiagram
+    participant ClerkSync as Clerk Sync Timer
+    participant ClerkAPI as Clerk API
+    participant DB as PostgreSQL
+
+    Note over ClerkSync: Triggers every 15 seconds
+    
+    ClerkSync->>ClerkAPI: Request users list
+    ClerkAPI->>ClerkSync: Return users data
+    
+    loop For each user
+        ClerkSync->>DB: Check if user exists
+        alt User exists
+            ClerkSync->>DB: Update if needed
+        else User doesn't exist
+            ClerkSync->>DB: Create new user
+        end
+    end
+    
+    Note over ClerkSync: Log results
+```
+
+2. **Failed Job Cleanup** (optional)
+   - Runs on a scheduled basis (e.g., hourly)
+   - Identifies stalled or failed processing jobs
+   - Requeues or marks jobs as failed based on configurable thresholds
+
+3. **Usage Aggregation** (optional)
+   - Runs on a daily or weekly schedule
+   - Aggregates usage statistics for reporting and billing
+   - Generates summary data for administrative dashboards
+
 ## Technical Decisions
 
 ### Technology Choices
@@ -309,22 +361,27 @@ sequenceDiagram
    - **Decision:** Use Clerk for authentication and user management
    - **Consequences:** Simplified auth flow, secure token handling, user management features
 
-4. **Backend: Azure Functions**
+4. **User Synchronization: Azure Functions Timer Trigger**
+   - **Context:** Need to maintain consistent user data between Clerk and PostgreSQL
+   - **Decision:** Implement a 15-second timer-triggered Azure Function for synchronization
+   - **Consequences:** Automatic data consistency, reduced manual intervention, reliable user management
+
+5. **Backend: Azure Functions**
    - **Context:** Need for scalable, serverless API endpoints
    - **Decision:** Use Azure Functions for the API layer
    - **Consequences:** Serverless architecture, pay-per-use pricing, automatic scaling
 
-5. **OCR: Azure Document Intelligence**
+6. **OCR: Azure Document Intelligence**
    - **Context:** Need for advanced OCR capabilities
    - **Decision:** Use Azure Document Intelligence for OCR extraction
    - **Consequences:** High-quality OCR, table extraction, image processing, handwriting recognition
 
-6. **Vector Database: Azure AI Search**
+7. **Vector Database: Azure AI Search**
    - **Context:** Need for semantic search capabilities
    - **Decision:** Use Azure AI Search for vector storage and search
    - **Consequences:** Efficient vector search, integration with Azure ecosystem, scalable search
 
-7. **Database: PostgreSQL**
+8. **Database: PostgreSQL**
    - **Context:** Need for relational data storage
    - **Decision:** Use PostgreSQL for metadata and user data
    - **Consequences:** Reliable relational database, ACID compliance, rich query capabilities
@@ -410,4 +467,11 @@ sequenceDiagram
 
 ## Conclusion
 
-The OCR LAB architecture is designed to provide a scalable, maintainable, and secure solution for OCR extraction and semantic search. By leveraging Azure services and following best practices in software design, the system can handle the requirements outlined in the PRD while providing room for future expansion. 
+The OCR LAB architecture is designed to provide a scalable, maintainable, and secure solution for OCR extraction and semantic search. By leveraging Azure services and following best practices in software design, the system can handle the requirements outlined in the PRD while providing room for future expansion.
+
+## Change Log
+
+| Change | Story ID | Description |
+|--------|----------|-------------|
+| Initial Architecture | story-1 | Initial approved system design and documentation |
+| Add Clerk-PostgreSQL Synchronization | story-3 | Implemented a 15-second TimeTrigger Azure Function to automatically sync Clerk users with PostgreSQL database | 
