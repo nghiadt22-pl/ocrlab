@@ -9,12 +9,11 @@ import datetime
 import base64
 from typing import Optional, List, Dict, Any
 import requests  # Add this import for making HTTP requests to Clerk API
-import sys
 import time
 import uuid
 import re
 import math
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import traceback
 
 # Import database modules
@@ -24,48 +23,270 @@ from database.models import User, Folder, File, UsageStat
 
 # Import Azure Document Intelligence
 from azure.ai.documentintelligence import DocumentIntelligenceClient
-from azure.ai.documentintelligence.models import AnalyzeResult
+from azure.ai.documentintelligence.models import AnalyzeResult, AnalyzeDocumentRequest
 from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import ResourceNotFoundError, ServiceRequestError
 
 # Azure Storage and Search
 from azure.storage.queue import QueueServiceClient
+from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+from azure.search.documents import SearchClient
+from azure.search.documents.models import VectorizedQuery, QueryType
+from openai import AzureOpenAI
+
+# Import the services
+from services.chunking import ChunkingService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('ocrlab')
 
-# Verify environment variables on startup
-def verify_environment_variables():
-    """Verify that all required environment variables are set."""
-    required_vars = [
-        'POSTGRES_CONNECTION_STRING',
-        'AzureWebJobsStorage',
-        'CLERK_API_KEY'
-    ]
-    
-    # Optional in mock mode, required in production
-    if os.environ.get('AzureWebJobsStorage') != "mock":
-        required_vars.extend([
-            'DOCUMENT_INTELLIGENCE_ENDPOINT',
-            'DOCUMENT_INTELLIGENCE_API_KEY'
-        ])
-    
-    missing_vars = [var for var in required_vars if not os.environ.get(var)]
-    
-    if missing_vars:
-        logger.warning(f"Missing required environment variables: {', '.join(missing_vars)}")
-        logger.warning("Some functionality may not work correctly without these variables.")
-    else:
-        logger.info("All required environment variables are set.")
+# Initialize clients at global scope
+document_intelligence_client = None
+openai_client = None
+ai_search_client = None
+blob_service_client = None
 
-# Run verification on startup
-verify_environment_variables()
+def initialize_azure_clients():
+    """Initialize Azure clients at module level for better performance."""
+    global document_intelligence_client, openai_client, ai_search_client, blob_service_client
+    
+    # Initialize Document Intelligence client
+    try:
+        doc_endpoint = os.environ.get("DOCUMENT_INTELLIGENCE_ENDPOINT") or os.environ.get("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT")
+        doc_key = os.environ.get("DOCUMENT_INTELLIGENCE_API_KEY") or os.environ.get("AZURE_DOCUMENT_INTELLIGENCE_KEY")
+        
+        if doc_endpoint and doc_key:
+            document_intelligence_client = DocumentIntelligenceClient(doc_endpoint, AzureKeyCredential(doc_key))
+            logger.info("Document Intelligence client initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Document Intelligence client: {str(e)}")
+    
+    # Initialize OpenAI client
+    try:
+        api_key = os.environ.get("AZURE_OPENAI_KEY") or os.environ.get("AZURE_OPENAI_API_KEY")
+        api_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+        api_version = os.environ.get("AZURE_OPENAI_API_VERSION")
+        
+        if api_key and api_endpoint and api_version:
+            openai_client = AzureOpenAI(
+                api_key=api_key,
+                api_version=api_version,
+                azure_endpoint=api_endpoint,
+                timeout=30.0
+            )
+            logger.info("Azure OpenAI client initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Azure OpenAI client: {str(e)}")
+    
+    # Initialize AI Search client
+    try:
+        search_endpoint = os.environ.get("AZURE_AISEARCH_ENDPOINT")
+        search_key = os.environ.get("AZURE_AISEARCH_KEY")
+        search_index = os.environ.get("AZURE_AISEARCH_INDEX")
+        
+        if search_endpoint and search_key and search_index:
+            ai_search_client = SearchClient(search_endpoint, search_index, AzureKeyCredential(search_key))
+            logger.info("Azure AI Search client initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Azure AI Search client: {str(e)}")
+    
+    # Initialize Blob Storage client
+    try:
+        connection_string = os.environ.get("AzureWebJobsStorage")
+        
+        if connection_string:
+            blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+            logger.info("Azure Blob Storage client initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Azure Blob Storage client: {str(e)}")
+
+def get_document_intelligence_client():
+    """
+    Get the Document Intelligence client, initializing it if necessary.
+    
+    Returns:
+        DocumentIntelligenceClient: The initialized client
+    """
+    global document_intelligence_client
+    
+    # If client already initialized, return it
+    if document_intelligence_client is not None:
+        return document_intelligence_client
+    
+    # Initialize client
+    try:
+        doc_endpoint = os.environ.get("DOCUMENT_INTELLIGENCE_ENDPOINT") or os.environ.get("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT")
+        doc_key = os.environ.get("DOCUMENT_INTELLIGENCE_API_KEY") or os.environ.get("AZURE_DOCUMENT_INTELLIGENCE_KEY")
+        
+        if not doc_endpoint or not doc_key:
+            raise ValueError("Missing Document Intelligence endpoint or key environment variables")
+        
+        document_intelligence_client = DocumentIntelligenceClient(doc_endpoint, AzureKeyCredential(doc_key))
+        logger.info("Document Intelligence client initialized on demand")
+        return document_intelligence_client
+    except Exception as e:
+        logger.error(f"Failed to initialize Document Intelligence client: {str(e)}")
+        raise
+
+def get_openai_client():
+    """
+    Get the Azure OpenAI client, initializing it if necessary.
+    
+    Returns:
+        AzureOpenAI: The initialized client
+    """
+    global openai_client
+    
+    # If client already initialized, return it
+    if openai_client is not None:
+        return openai_client
+    
+    # Initialize client
+    try:
+        api_key = os.environ.get("AZURE_OPENAI_KEY") or os.environ.get("AZURE_OPENAI_API_KEY")
+        api_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+        api_version = os.environ.get("AZURE_OPENAI_API_VERSION")
+        
+        if not api_key or not api_endpoint or not api_version:
+            raise ValueError("Missing OpenAI API environment variables")
+        
+        openai_client = AzureOpenAI(
+            api_key=api_key,
+            api_version=api_version,
+            azure_endpoint=api_endpoint,
+            timeout=30.0
+        )
+        logger.info("Azure OpenAI client initialized on demand")
+        return openai_client
+    except Exception as e:
+        logger.error(f"Failed to initialize Azure OpenAI client: {str(e)}")
+        raise
+
+def get_search_client():
+    """
+    Get the Azure AI Search client, initializing it if necessary.
+    
+    Returns:
+        SearchClient: The initialized client
+    """
+    global ai_search_client
+    
+    # If client already initialized, return it
+    if ai_search_client is not None:
+        return ai_search_client
+    
+    # Initialize client
+    try:
+        search_endpoint = os.environ.get("AZURE_AISEARCH_ENDPOINT")
+        search_key = os.environ.get("AZURE_AISEARCH_KEY")
+        search_index = os.environ.get("AZURE_AISEARCH_INDEX")
+        
+        if not search_endpoint or not search_key or not search_index:
+            raise ValueError("Missing Azure AI Search environment variables")
+        
+        ai_search_client = SearchClient(search_endpoint, search_index, AzureKeyCredential(search_key))
+        logger.info("Azure AI Search client initialized on demand")
+        return ai_search_client
+    except Exception as e:
+        logger.error(f"Failed to initialize Azure AI Search client: {str(e)}")
+        raise
+
+def get_blob_service_client():
+    """
+    Get the Azure Blob Storage client, initializing it if necessary.
+    
+    Returns:
+        BlobServiceClient: The initialized client
+    """
+    global blob_service_client
+    
+    # If client already initialized, return it
+    if blob_service_client is not None:
+        return blob_service_client
+    
+    # Initialize client
+    try:
+        connection_string = os.environ.get("AzureWebJobsStorage")
+        
+        if not connection_string:
+            raise ValueError("Missing Azure Storage connection string")
+        
+        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+        logger.info("Azure Blob Storage client initialized on demand")
+        return blob_service_client
+    except Exception as e:
+        logger.error(f"Failed to initialize Azure Blob Storage client: {str(e)}")
+        raise
+
+def generate_blob_sas_url(container_name, blob_path, permissions=None, expiry_hours=1):
+    """
+    Generate a SAS URL for accessing a blob.
+    
+    Args:
+        container_name: Name of the container
+        blob_path: Path to the blob within the container
+        permissions: BlobSasPermissions object, defaults to read only
+        expiry_hours: Number of hours until the SAS token expires
+        
+    Returns:
+        str: The full SAS URL to the blob
+    """
+    try:
+        # Get the blob service client
+        blob_service_client = get_blob_service_client()
+        
+        # Set default permissions to read if not specified
+        if permissions is None:
+            permissions = BlobSasPermissions(read=True)
+        
+        # Create an expiry time
+        expiry_time = datetime.utcnow() + timedelta(hours=expiry_hours)
+        
+        # Get the account key from the connection string
+        connection_string = os.environ.get("AzureWebJobsStorage")
+        account_name = None
+        account_key = None
+        
+        # Parse the connection string to get account name and key
+        for part in connection_string.split(';'):
+            if part.startswith('AccountName='):
+                account_name = part.split('=', 1)[1]
+            elif part.startswith('AccountKey='):
+                account_key = part.split('=', 1)[1]
+        
+        if not account_name or not account_key:
+            raise ValueError("Could not extract account name or key from connection string")
+        
+        # Generate the SAS token
+        sas_token = generate_blob_sas(
+            account_name=account_name,
+            container_name=container_name,
+            blob_name=blob_path,
+            account_key=account_key,
+            permission=permissions,
+            expiry=expiry_time
+        )
+        
+        # Get the blob URL
+        container_client = blob_service_client.get_container_client(container_name)
+        blob_client = container_client.get_blob_client(blob_path)
+        
+        # Construct the full SAS URL
+        sas_url = f"{blob_client.url}?{sas_token}"
+        
+        return sas_url
+    except Exception as e:
+        logger.error(f"Error generating SAS URL: {str(e)}")
+        raise
+
+# Initialize clients when module loads
+initialize_azure_clients()
 
 # Create the function app
 app = func.FunctionApp()
 
-# Helper functions
+# Helper functions and standardized utilities
 def get_user_id(req):
     """Extract user ID from request headers."""
     return req.headers.get('x-user-id')
@@ -77,6 +298,21 @@ def create_error_response(status_code, message):
         status_code=status_code,
         mimetype="application/json"
     )
+
+def create_success_response(data, status_code=200):
+    """Create a standardized success response."""
+    return func.HttpResponse(
+        body=json.dumps(data),
+        status_code=status_code,
+        mimetype="application/json"
+    )
+
+def validate_user_request(req):
+    """Validate that a request has a user ID."""
+    user_id = get_user_id(req)
+    if not user_id:
+        return None, create_error_response(401, "Unauthorized: User ID not provided")
+    return user_id, None
 
 def get_or_create_user(user_id: str, email: Optional[str] = None) -> Optional[User]:
     """Get or create a user in the database."""
@@ -109,28 +345,6 @@ def get_queue_client(queue_name="ocr-processing-queue"):
         if not connection_string:
             logger.error("Missing storage connection string")
             raise ValueError("Storage configuration error")
-        
-        # Handle mock mode for testing
-        if connection_string == "mock":
-            logger.info("Using mock queue client for testing")
-            # Return a mock queue client
-            class MockQueueClient:
-                def create_queue(self):
-                    logger.info("Mock: Queue created")
-                    return True
-                
-                def send_message(self, message):
-                    logger.info(f"Mock: Message sent to queue: {message}")
-                    # Process the message immediately for testing
-                    try:
-                        message_data = json.loads(message)
-                        logger.info(f"Mock: Processing OCR job: {message}")
-                        logger.info(f"Mock: OCR processing completed for job: {message}")
-                    except Exception as e:
-                        logger.error(f"Mock: Error processing OCR job: {str(e)}")
-                    return True
-            
-            return MockQueueClient()
         
         # Create the queue client
         queue_service_client = QueueServiceClient.from_connection_string(connection_string)
@@ -260,13 +474,13 @@ def clerk_sync_timer(myTimer: func.TimerRequest) -> None:
         logger.error(f"Error in Clerk sync timer: {str(e)}")
 
 # Folder Management Functions
-@app.route(route="folders", auth_level=func.AuthLevel.ANONYMOUS, methods=["GET"])
+@app.route(route="api/folders", auth_level=func.AuthLevel.ANONYMOUS, methods=["GET"])
 def list_folders(req: func.HttpRequest) -> func.HttpResponse:
     """List all folders for a user."""
     try:
-        user_id = get_user_id(req)
-        if not user_id:
-            return create_error_response(400, "User ID is required in x-user-id header")
+        user_id, error_response = validate_user_request(req)
+        if error_response:
+            return error_response
         
         # Get parent_id from query parameters if provided
         parent_id_str = req.params.get('parent_id')
@@ -290,24 +504,20 @@ def list_folders(req: func.HttpRequest) -> func.HttpResponse:
                     "updated_at": folder.updated_at.isoformat() if folder.updated_at else None
                 })
             
-            return func.HttpResponse(
-                body=json.dumps({"folders": folders_data}),
-                status_code=200,
-                mimetype="application/json"
-            )
+            return create_success_response({"folders": folders_data})
         finally:
             db.close()
     except Exception as e:
         logger.error(f"Error listing folders: {str(e)}")
         return create_error_response(500, f"Failed to list folders: {str(e)}")
 
-@app.route(route="folders", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+@app.route(route="api/folders", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
 def create_folder(req: func.HttpRequest) -> func.HttpResponse:
     """Create a new folder for a user."""
     try:
-        user_id = get_user_id(req)
-        if not user_id:
-            return create_error_response(400, "User ID is required in x-user-id header")
+        user_id, error_response = validate_user_request(req)
+        if error_response:
+            return error_response
         
         req_body = req.get_json()
         if not req_body or 'name' not in req_body:
@@ -338,24 +548,20 @@ def create_folder(req: func.HttpRequest) -> func.HttpResponse:
                 "updated_at": new_folder.updated_at.isoformat() if new_folder.updated_at else None
             }
             
-            return func.HttpResponse(
-                body=json.dumps({"folder": folder_data}),
-                status_code=201,
-                mimetype="application/json"
-            )
+            return create_success_response({"folder": folder_data}, 201)
         finally:
             db.close()
     except Exception as e:
         logger.error(f"Error creating folder: {str(e)}")
         return create_error_response(500, f"Failed to create folder: {str(e)}")
 
-@app.route(route="folders/{folder_id}", auth_level=func.AuthLevel.ANONYMOUS, methods=["DELETE"])
+@app.route(route="api/folders/{folder_id}", auth_level=func.AuthLevel.ANONYMOUS, methods=["DELETE"])
 def delete_folder(req: func.HttpRequest) -> func.HttpResponse:
     """Delete a folder."""
     try:
-        user_id = get_user_id(req)
-        if not user_id:
-            return create_error_response(400, "User ID is required in x-user-id header")
+        user_id, error_response = validate_user_request(req)
+        if error_response:
+            return error_response
         
         folder_id_str = req.route_params.get('folder_id')
         if not folder_id_str:
@@ -378,14 +584,10 @@ def delete_folder(req: func.HttpRequest) -> func.HttpResponse:
             success = crud.delete_folder(db, folder_id)
             
             if success:
-                return func.HttpResponse(
-                    body=json.dumps({
-                        "success": True,
-                        "message": "Folder deleted successfully"
-                    }),
-                    status_code=200,
-                    mimetype="application/json"
-                )
+                return create_success_response({
+                    "success": True,
+                    "message": "Folder deleted successfully"
+                })
             else:
                 return create_error_response(500, "Failed to delete folder")
         finally:
@@ -401,9 +603,9 @@ def upload_file(req: func.HttpRequest) -> func.HttpResponse:
     """Handle file upload and queue it for OCR processing."""
     try:
         # Extract user ID from request
-        user_id = get_user_id(req)
-        if not user_id:
-            return create_error_response(401, "Unauthorized: User ID not provided")
+        user_id, error_response = validate_user_request(req)
+        if error_response:
+            return error_response
             
         # Parse request form data
         req_body = req.get_json()
@@ -444,8 +646,7 @@ def upload_file(req: func.HttpRequest) -> func.HttpResponse:
                 user_id=user_id,
                 blob_path=blob_path,
                 size_bytes=size_bytes,
-                mime_type=mime_type,
-                status='queued'  # Initial status
+                mime_type=mime_type
             )
             
             # Log file creation
@@ -457,7 +658,8 @@ def upload_file(req: func.HttpRequest) -> func.HttpResponse:
             # Prepare message
             message = {
                 'file_id': file.id,
-                'user_id': user_id
+                'user_id': user_id,
+                'blob_path': blob_path
             }
             
             # Encode message as JSON
@@ -467,17 +669,13 @@ def upload_file(req: func.HttpRequest) -> func.HttpResponse:
             queue_client.send_message(message_json)
             
             # Return success response
-            return func.HttpResponse(
-                body=json.dumps({
-                    "id": file.id,
-                    "name": file.name,
-                    "folder_id": file.folder_id,
-                    "status": file.status,
-                    "created_at": file.created_at.isoformat() if file.created_at else None
-                }),
-                status_code=201,
-                mimetype="application/json"
-            )
+            return create_success_response({
+                "id": file.id,
+                "name": file.name,
+                "folder_id": file.folder_id,
+                "status": file.status,
+                "created_at": file.created_at.isoformat() if file.created_at else None
+            }, 201)
         finally:
             if 'db' in locals():
                 db.close()
@@ -485,15 +683,16 @@ def upload_file(req: func.HttpRequest) -> func.HttpResponse:
         logger.error(f"Error uploading file: {str(e)}")
         return create_error_response(500, f"Failed to upload file: {str(e)}")
 
-@app.route(route="files", auth_level=func.AuthLevel.ANONYMOUS, methods=["GET"])
+@app.route(route="api/files", auth_level=func.AuthLevel.ANONYMOUS, methods=["GET"])
 def list_files(req: func.HttpRequest) -> func.HttpResponse:
     """List all files in a folder."""
     try:
-        user_id = get_user_id(req)
+        user_id, error_response = validate_user_request(req)
+        if error_response:
+            return error_response
+            
         folder_id_str = req.params.get('folder_id')
         
-        if not user_id:
-            return create_error_response(400, "User ID is required in x-user-id header")
         if not folder_id_str:
             return create_error_response(400, "Folder ID is required in query parameters")
 
@@ -520,28 +719,24 @@ def list_files(req: func.HttpRequest) -> func.HttpResponse:
                     "processed_at": file.processed_at.isoformat() if file.processed_at else None
                 })
             
-            return func.HttpResponse(
-                body=json.dumps({"files": files_data}),
-                status_code=200,
-                mimetype="application/json"
-            )
+            return create_success_response({"files": files_data})
         finally:
             db.close()
     except Exception as e:
         logger.error(f"Error listing files: {str(e)}")
         return create_error_response(500, f"Failed to list files: {str(e)}")
 
-@app.route(route="files", auth_level=func.AuthLevel.ANONYMOUS, methods=["DELETE"])
+@app.route(route="api/files/{file_id}", auth_level=func.AuthLevel.ANONYMOUS, methods=["DELETE"])
 def delete_file(req: func.HttpRequest) -> func.HttpResponse:
     """Delete a file."""
     try:
-        user_id = get_user_id(req)
-        file_id_str = req.params.get('id')
-        
-        if not user_id:
-            return create_error_response(400, "User ID is required in x-user-id header")
+        user_id, error_response = validate_user_request(req)
+        if error_response:
+            return error_response
+            
+        file_id_str = req.route_params.get('file_id')
         if not file_id_str:
-            return create_error_response(400, "File ID is required in query parameters")
+            return create_error_response(400, "File ID is required in route parameters")
         
         file_id = int(file_id_str)
         
@@ -562,14 +757,10 @@ def delete_file(req: func.HttpRequest) -> func.HttpResponse:
             if success:
                 # TODO: Also delete the blob from storage
                 
-                return func.HttpResponse(
-                    body=json.dumps({
-                        "success": True,
-                        "message": "File deleted successfully"
-                    }),
-                    status_code=200,
-                    mimetype="application/json"
-                )
+                return create_success_response({
+                    "success": True,
+                    "message": "File deleted successfully"
+                })
             else:
                 return create_error_response(500, "Failed to delete file")
         finally:
@@ -579,13 +770,13 @@ def delete_file(req: func.HttpRequest) -> func.HttpResponse:
         return create_error_response(500, f"Failed to delete file: {str(e)}")
 
 # Search Functions
-@app.route(route="query", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+@app.route(route="api/query", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
 def search_query(req: func.HttpRequest) -> func.HttpResponse:
-    """Perform a semantic search query."""
+    """Perform a vector search query."""
     try:
-        user_id = get_user_id(req)
-        if not user_id:
-            return create_error_response(400, "User ID is required in x-user-id header")
+        user_id, error_response = validate_user_request(req)
+        if error_response:
+            return error_response
         
         req_body = req.get_json()
         if not req_body or 'query' not in req_body:
@@ -599,40 +790,13 @@ def search_query(req: func.HttpRequest) -> func.HttpResponse:
         from azure.core.credentials import AzureKeyCredential
         
         # Get Azure Search credentials from environment
-        endpoint = os.environ.get('AZURE_AISEARCH_ENDPOINT', 'https://testpl.search.windows.net/')
+        endpoint = os.environ.get('AZURE_AISEARCH_ENDPOINT')
         search_api_key = os.environ.get('AZURE_AISEARCH_KEY')
-        search_index_name = os.environ.get('AZURE_AISEARCH_INDEX', 'test-upload')
+        search_index_name = os.environ.get('AZURE_AISEARCH_INDEX')
         
-        if not search_api_key or search_api_key == 'default-key-for-development':
-            logger.warning("Using mock search service because API key not configured")
-            # Return mock data for testing
-            mock_results = [
-                {
-                    "id": "mock-doc-1",
-                    "text": "This is a sample document that matches your query: " + query,
-                    "score": 0.95,
-                    "filename": "sample.pdf",
-                    "blobUrl": "https://example.com/sample.pdf",
-                    "pageNumber": 1
-                }
-            ]
-            
-            # Update usage statistics to count this query
-            try:
-                db = get_db_session()
-                crud.update_queries_made(db, user_id, 1)
-                db.close()
-            except Exception as e:
-                logger.error(f"Error updating query usage statistics: {str(e)}")
-            
-            return func.HttpResponse(
-                body=json.dumps({
-                    "results": mock_results,
-                    "note": "Mock results - Azure Search API key not configured"
-                }),
-                status_code=200,
-                mimetype="application/json"
-            )
+        if not endpoint or not search_api_key or not search_index_name:
+            logger.error("Azure AI Search not properly configured")
+            return create_error_response(500, "Search service not properly configured")
         
         # Create the search client
         search_client = SearchClient(
@@ -642,12 +806,12 @@ def search_query(req: func.HttpRequest) -> func.HttpResponse:
         )
                         
         # Set up search options
-        # Filter by user_id from metadata for multi-tenancy security
-        select_fields = ["id", "content", "metadata"]
+        # Select only fields that actually exist in the index
+        select_fields = ["chunk_id", "chunk", "title", "header_1", "header_2", "header_3", "user_id"]
         
         # Perform search query
         try:
-            # Regular search (not semantic) since semantic requires special configuration
+            # Use standard search since semantic requires special configuration
             results = search_client.search(
                 search_text=query,
                 select=select_fields,
@@ -657,27 +821,20 @@ def search_query(req: func.HttpRequest) -> func.HttpResponse:
             # Process and format the results
             formatted_results = []
             for result in results:
-                # Extract metadata if available
-                metadata = {}
-                if "metadata" in result and result["metadata"]:
-                    try:
-                        metadata = json.loads(result["metadata"])
-                    except json.JSONDecodeError:
-                        logger.warning(f"Failed to parse metadata JSON for document {result.get('id', '')}")
-                
-                # Skip documents not owned by this user (if user_id in metadata)
-                result_user_id = metadata.get("user_id")
+                # Check if this document belongs to the user
+                result_user_id = result.get("user_id", "")
                 if result_user_id and result_user_id != user_id:
                     continue
                     
                 # Format the result
                 formatted_result = {
-                    "id": result.get("id", ""),
-                    "text": result.get("content", ""),
+                    "id": result.get("chunk_id", ""),
+                    "text": result.get("chunk", ""),
                     "score": result["@search.score"] if "@search.score" in result else 0,
-                    "filename": metadata.get("filename", ""),
-                    "blobUrl": metadata.get("blobUrl", ""),
-                    "pageNumber": metadata.get("pageNumber", 1)
+                    "filename": result.get("title", ""),
+                    "title": result.get("title", ""),
+                    "page": result.get("header_2", "").replace("Page ", "") if result.get("header_2", "").startswith("Page ") else "",
+                    "type": result.get("header_3", "")
                 }
                 
                 formatted_results.append(formatted_result)
@@ -690,11 +847,7 @@ def search_query(req: func.HttpRequest) -> func.HttpResponse:
             except Exception as e:
                 logger.error(f"Error updating query usage statistics: {str(e)}")
             
-            return func.HttpResponse(
-                body=json.dumps({"results": formatted_results}),
-                status_code=200,
-                mimetype="application/json"
-            )
+            return create_success_response({"results": formatted_results})
         except Exception as e:
             logger.error(f"Error during search operation: {str(e)}")
             return create_error_response(500, f"Error during search operation: {str(e)}")
@@ -703,13 +856,13 @@ def search_query(req: func.HttpRequest) -> func.HttpResponse:
         return create_error_response(500, f"Failed to perform search: {str(e)}")
 
 # Usage Tracking Functions
-@app.route(route="usage", auth_level=func.AuthLevel.ANONYMOUS, methods=["GET"])
+@app.route(route="api/usage", auth_level=func.AuthLevel.ANONYMOUS, methods=["GET"])
 def get_usage(req: func.HttpRequest) -> func.HttpResponse:
     """Get usage statistics for a user."""
     try:
-        user_id = get_user_id(req)
-        if not user_id:
-            return create_error_response(400, "User ID is required in x-user-id header")
+        user_id, error_response = validate_user_request(req)
+        if error_response:
+            return error_response
         
         # Get date range parameters (defaults to today)
         from datetime import date, timedelta
@@ -767,18 +920,621 @@ def get_usage(req: func.HttpRequest) -> func.HttpResponse:
                 ]
             }
             
-            return func.HttpResponse(
-                body=json.dumps({"usage": usage_data}),
-                status_code=200,
-                mimetype="application/json"
-            )
+            return create_success_response({"usage": usage_data})
         finally:
             db.close()
     except Exception as e:
         logger.error(f"Error retrieving usage data: {str(e)}")
         return create_error_response(500, f"Failed to retrieve usage data: {str(e)}")
 
-# OCR Processing Queue Function
+# Document Processing Functions
+@app.function_name("ProcessDocument")
+@app.route(route="api/process_document", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+def process_document(req: func.HttpRequest) -> func.HttpResponse:
+    """Process a document through OCR, chunking, embedding, and indexing."""
+    try:
+        # Extract user ID from request headers
+        user_id = get_user_id(req)
+        if not user_id:
+            return create_error_response(401, "Unauthorized: User ID not provided")
+        
+        # Get document from request
+        document_bytes = req.get_body()
+        if not document_bytes:
+            return create_error_response(400, "Document content is required")
+        
+        # Get document metadata from request parameters
+        document_title = req.params.get('title', 'Untitled document')
+        document_id = req.params.get('id', f'doc_{document_title.replace(" ", "_")}')
+        file_id = req.params.get('file_id')
+        
+        # Update file status in database if file_id is provided
+        if file_id:
+            try:
+                db = get_db_session()
+                file = crud.get_file(db, int(file_id), user_id)
+                if not file:
+                    db.close()
+                    return create_error_response(404, f"File not found: {file_id}")
+                
+                # Update file status to processing
+                crud.update_file_status(db, int(file_id), "processing")
+                db.close()
+            except Exception as e:
+                logger.error(f"Error updating file status: {str(e)}")
+                if 'db' in locals():
+                    db.close()
+        
+        # Process document with Azure Document Intelligence
+        try:
+            # Get Document Intelligence client
+            document_client = get_or_create_document_intelligence_client()
+            
+            # Process document
+            poller = document_client.begin_analyze_document("prebuilt-layout", body=document_bytes)
+            result = poller.result()
+            
+            # Extract structured content from result
+            structured_content = extract_document_content(result)
+        except Exception as e:
+            logger.error(f"Error processing document: {str(e)}")
+            # Update file status to error if file_id is provided
+            if file_id:
+                try:
+                    db = get_db_session()
+                    crud.update_file_status(db, int(file_id), "error", str(e))
+                    db.close()
+                except Exception as db_error:
+                    logger.error(f"Error updating file status: {str(db_error)}")
+                    if 'db' in locals():
+                        db.close()
+            return create_error_response(500, f"Error processing document with Document Intelligence: {str(e)}")
+        
+        # Chunk document content
+        try:
+            chunking_service = ChunkingService()
+            chunks = chunking_service.chunk_document(structured_content, document_id, document_title)
+        except Exception as e:
+            logger.error(f"Error chunking document: {str(e)}")
+            # Update file status to error if file_id is provided
+            if file_id:
+                try:
+                    db = get_db_session()
+                    crud.update_file_status(db, int(file_id), "error", str(e))
+                    db.close()
+                except Exception as db_error:
+                    logger.error(f"Error updating file status: {str(db_error)}")
+                    if 'db' in locals():
+                        db.close()
+            return create_error_response(500, f"Error chunking document: {str(e)}")
+        
+        # Generate embeddings for chunks using Azure OpenAI directly
+        try:
+            # Get credentials from environment variables
+            api_key = os.environ.get("AZURE_OPENAI_KEY") or os.environ.get("AZURE_OPENAI_API_KEY")
+            api_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+            api_version = os.environ.get("AZURE_OPENAI_API_VERSION")
+            deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+            
+            if not api_key or not api_endpoint or not api_version or not deployment:
+                raise ValueError("Azure OpenAI credentials not fully configured")
+            
+            logger.info(f"Generating embeddings for {len(chunks)} chunks")
+            
+            # Create the OpenAI client
+            openai_client = AzureOpenAI(
+                api_key=api_key,
+                api_version=api_version,
+                azure_endpoint=api_endpoint,
+                timeout=30.0
+            )
+            
+            # Process one chunk at a time (required for Azure OpenAI)
+            chunks_with_vectors = []
+            processed_count = 0
+            
+            for chunk_index, chunk in enumerate(chunks):
+                try:
+                    # Add delay between requests to avoid rate limiting
+                    if processed_count > 0:
+                        time.sleep(2)  # 2 second delay between chunks
+                    
+                    logger.info(f"Processing chunk {chunk_index+1}/{len(chunks)} with ID {chunk.get('id', 'unknown')}")
+                    
+                    # Truncate text if it's too long
+                    text = chunk["text"]
+                    max_text_length = 8000
+                    if len(text) > max_text_length:
+                        logger.warning(f"Text too long ({len(text)} chars), truncating to {max_text_length}")
+                        text = text[:max_text_length]
+                    
+                    # Generate embedding
+                    response = openai_client.embeddings.create(
+                        input=text,
+                        model=deployment
+                    )
+                    
+                    # Add embedding to the chunk
+                    chunk["vector"] = response.data[0].embedding
+                    chunks_with_vectors.append(chunk)
+                    processed_count += 1
+                    
+                    logger.info(f"Successfully processed chunk {processed_count}/{len(chunks)}")
+                    
+                except Exception as e:
+                    logger.error(f"Error generating embedding for chunk {chunk_index+1}/{len(chunks)}: {str(e)}")
+                    # Don't retry - just skip this chunk and continue with the next one
+            
+            logger.info(f"Successfully generated embeddings for {len(chunks_with_vectors)} of {len(chunks)} chunks")
+            
+        except Exception as e:
+            logger.error(f"Error generating embeddings: {str(e)}")
+            # Update file status to error if file_id is provided
+            if file_id:
+                try:
+                    db = get_db_session()
+                    crud.update_file_status(db, int(file_id), "error", str(e))
+                    db.close()
+                except Exception as db_error:
+                    logger.error(f"Error updating file status: {str(db_error)}")
+                    if 'db' in locals():
+                        db.close()
+            return create_error_response(500, f"Error generating embeddings: {str(e)}")
+        
+        # Index chunks in Azure AI Search directly
+        try:
+            # Get credentials from environment variables
+            endpoint = os.environ.get("AZURE_AISEARCH_ENDPOINT")
+            key = os.environ.get("AZURE_AISEARCH_KEY")
+            index_name = os.environ.get("AZURE_AISEARCH_INDEX")
+            
+            if not endpoint or not key or not index_name:
+                raise ValueError("Azure AI Search credentials not fully configured")
+            
+            logger.info(f"Indexing {len(chunks_with_vectors)} chunks for user {user_id}")
+            
+            # Create search client
+            search_client = SearchClient(endpoint, index_name, AzureKeyCredential(key))
+            
+            # Prepare search documents - ONLY include chunks that got embeddings
+            search_documents = []
+            
+            for chunk in chunks_with_vectors:
+                # Include the parent document ID in the chunk ID to ensure uniqueness
+                chunk_id = chunk["id"]
+                
+                # Create the search document
+                search_document = {
+                    "chunk_id": chunk_id,  # Primary key field
+                    "text_parent_id": chunk["parent_id"],
+                    "chunk": chunk["text"],
+                    "title": chunk["document_title"],
+                    "header_1": chunk.get("document_title", ""),  # Use document title as header_1
+                    "header_2": f"Page {chunk['page']}",     # Use page number as header_2
+                    "header_3": chunk["type"].capitalize(),   # Use type as header_3
+                    "content_vector": chunk["vector"],
+                    "user_id": user_id  # Include user_id for multi-tenancy
+                }
+                search_documents.append(search_document)
+            
+            # Split into batches if there are many documents
+            batch_size = 1000  # Azure Search can handle up to 1000 documents in a single request
+            
+            indexed_count = 0
+            failed_count = 0
+            
+            for i in range(0, len(search_documents), batch_size):
+                batch = search_documents[i:i + batch_size]
+                logger.info(f"Uploading batch of {len(batch)} documents to search index")
+                
+                # Upload documents to search index
+                upload_result = search_client.upload_documents(documents=batch)
+                
+                # Log the results
+                success_count = len([r for r in upload_result if r.succeeded])
+                batch_failed_count = len([r for r in upload_result if not r.succeeded])
+                
+                indexed_count += success_count
+                failed_count += batch_failed_count
+                
+                logger.info(f"Batch upload results: {success_count} succeeded, {batch_failed_count} failed")
+                
+                # If any failed, log detailed errors
+                if batch_failed_count > 0:
+                    for i, result in enumerate(upload_result):
+                        if not result.succeeded:
+                            logger.error(f"Error indexing document {i}: {result.status_code} - {result.message}")
+            
+            # Create result summary
+            index_result = {
+                "total_count": len(search_documents),
+                "indexed_count": indexed_count,
+                "failed_count": failed_count
+            }
+            
+        except Exception as e:
+            logger.error(f"Error indexing chunks: {str(e)}")
+            # Update file status to error if file_id is provided
+            if file_id:
+                try:
+                    db = get_db_session()
+                    crud.update_file_status(db, int(file_id), "error", str(e))
+                    db.close()
+                except Exception as db_error:
+                    logger.error(f"Error updating file status: {str(db_error)}")
+                    if 'db' in locals():
+                        db.close()
+            return create_error_response(500, f"Error indexing chunks: {str(e)}")
+        
+        # Update file status to complete if file_id is provided
+        if file_id:
+            try:
+                db = get_db_session()
+                crud.update_file_status(db, int(file_id), "complete")
+                # Update usage statistics
+                pages_processed = len(set(chunk["page"] for chunk in chunks))
+                crud.update_pages_processed(db, user_id, pages_processed)
+                db.close()
+            except Exception as e:
+                logger.error(f"Error updating file status: {str(e)}")
+                if 'db' in locals():
+                    db.close()
+        
+        # Return success response with processing results
+        return create_success_response({
+            "document_id": document_id,
+            "title": document_title,
+            "chunks_count": len(chunks),
+            "indexed_count": index_result["indexed_count"],
+            "failed_count": index_result["failed_count"]
+        })
+    except Exception as e:
+        logger.error(f"Error processing document: {str(e)}")
+        return create_error_response(500, f"Error processing document: {str(e)}")
+
+# Vector Search Functions
+@app.function_name("VectorSearch")
+@app.route(route="api/vector_search", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+def vector_search(req: func.HttpRequest) -> func.HttpResponse:
+    """Perform a vector search query using embeddings."""
+    try:
+        # Extract user ID from request headers
+        user_id = get_user_id(req)
+        if not user_id:
+            return create_error_response(401, "Unauthorized: User ID not provided")
+        
+        # Get request body
+        req_body = req.get_json()
+        if not req_body:
+            return create_error_response(400, "Request body is required")
+        
+        # Extract query and parameters
+        query = req_body.get('query')
+        top_k = req_body.get('top_k', 5)
+        
+        if not query:
+            return create_error_response(400, "query parameter is required")
+        
+        # Check required environment variables upfront
+        api_key = os.environ.get("AZURE_OPENAI_KEY") or os.environ.get("AZURE_OPENAI_API_KEY")
+        api_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+        api_version = os.environ.get("AZURE_OPENAI_API_VERSION")
+        deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+        search_endpoint = os.environ.get("AZURE_AISEARCH_ENDPOINT")
+        search_key = os.environ.get("AZURE_AISEARCH_KEY")
+        search_index = os.environ.get("AZURE_AISEARCH_INDEX")
+        
+        missing_vars = []
+        if not api_key:
+            missing_vars.append("AZURE_OPENAI_API_KEY")
+        if not api_endpoint:
+            missing_vars.append("AZURE_OPENAI_ENDPOINT")
+        if not api_version:
+            missing_vars.append("AZURE_OPENAI_API_VERSION")
+        if not deployment:
+            missing_vars.append("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+        if not search_endpoint:
+            missing_vars.append("AZURE_AISEARCH_ENDPOINT")
+        if not search_key:
+            missing_vars.append("AZURE_AISEARCH_KEY")
+        if not search_index:
+            missing_vars.append("AZURE_AISEARCH_INDEX")
+            
+        if missing_vars:
+            error_msg = f"Missing required environment variables: {', '.join(missing_vars)}"
+            logger.error(error_msg)
+            return create_error_response(500, f"Search service not properly configured: {error_msg}")
+        
+        # Generate embeddings for the query using Azure OpenAI directly
+        try:
+            logger.info(f"Generating embeddings using Azure OpenAI: endpoint={api_endpoint}, deployment={deployment}")
+            
+            # Create the OpenAI client
+            openai_client = AzureOpenAI(
+                api_key=api_key,
+                api_version=api_version,
+                azure_endpoint=api_endpoint,
+                timeout=30.0
+            )
+            
+            # Truncate text if it's too long
+            max_text_length = 8000  # Approximate character limit for 8K tokens
+            if len(query) > max_text_length:
+                logger.warning(f"Query too long ({len(query)} chars), truncating to {max_text_length}")
+                query = query[:max_text_length]
+            
+            # Generate embedding
+            response = openai_client.embeddings.create(
+                input=query,
+                model=deployment
+            )
+            
+            # Extract the embedding from the response
+            query_vector = response.data[0].embedding
+            logger.info(f"Generated embedding with {len(query_vector)} dimensions")
+            
+        except Exception as e:
+            logger.error(f"Error generating query embeddings: {str(e)}")
+            return create_error_response(500, f"Error generating query embeddings: {str(e)}")
+        
+        # Perform search using Azure AI Search directly
+        try:
+            logger.info(f"Performing vector search in Azure AI Search: endpoint={search_endpoint}, index={search_index}")
+            
+            # Create search client
+            search_client = SearchClient(search_endpoint, search_index, AzureKeyCredential(search_key))
+            
+            # Build filter expression for user_id (multi-tenancy)
+            filter_expression = f"user_id eq '{user_id}'"
+            
+            # Define vector query
+            vector_queries = [
+                {
+                    "vector": query_vector,
+                    "k": top_k,
+                    "fields": "content_vector",
+                    "kind": "vector"
+                }
+            ]
+            
+            # Execute search
+            search_results = search_client.search(
+                search_text=None,  # No text search
+                vector_queries=vector_queries,
+                filter=filter_expression,
+                top=top_k,
+                include_total_count=True
+            )
+            
+            # Process results
+            results = []
+            for result in search_results:
+                results.append({
+                    "text": result.get("chunk", ""),
+                    "page": int(result.get("header_2", "Page 0").replace("Page ", "")) if result.get("header_2") else 0,
+                    "type": result.get("header_3", "Unknown").lower() if result.get("header_3") else "unknown",
+                    "score": result.get("@search.score", 0.0),
+                    "document_title": result.get("title", ""),
+                    "parent_id": result.get("text_parent_id", "")
+                })
+            
+            logger.info(f"Found {len(results)} results for vector search")
+        except Exception as e:
+            logger.error(f"Error performing vector search: {str(e)}")
+            return create_error_response(500, f"Error performing vector search: {str(e)}")
+        
+        # Update usage statistics to count this query
+        try:
+            db = get_db_session()
+            crud.update_queries_made(db, user_id, 1)
+            db.close()
+        except Exception as e:
+            logger.error(f"Error updating query usage statistics: {str(e)}")
+            if 'db' in locals():
+                db.close()
+        
+        # Return results
+        return create_success_response({"results": results})
+    except Exception as e:
+        logger.error(f"Error performing search: {str(e)}")
+        return create_error_response(500, f"Error performing search: {str(e)}")
+
+# Helper function for OCR Processing Queue
+def process_document_from_queue(file_id, user_id, blob_path):
+    """Process a document from the OCR queue using our new implementation."""
+    try:
+        logger.info(f"Processing document from queue: file_id={file_id}, user_id={user_id}")
+        
+        # Check required environment variables upfront
+        container_name = os.environ.get("BLOB_CONTAINER_NAME")
+        deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+        
+        if not container_name:
+            error_msg = "Missing required environment variable: BLOB_CONTAINER_NAME"
+            logger.error(error_msg)
+            
+            # Update file status to error
+            db = get_db_session()
+            crud.update_file_status(db, file_id, "error", error_msg)
+            db.close()
+            return
+        
+        if not deployment:
+            error_msg = "Missing required environment variable: AZURE_OPENAI_EMBEDDING_DEPLOYMENT"
+            logger.error(error_msg)
+            
+            # Update file status to error
+            db = get_db_session()
+            crud.update_file_status(db, file_id, "error", error_msg)
+            db.close()
+            return
+        
+        # Get the file from the database
+        db = get_db_session()
+        file = crud.get_file(db, file_id, user_id)
+        if not file:
+            logger.error(f"File not found: {file_id}")
+            db.close()
+            return
+        
+        # Update file status to processing
+        crud.update_file_status(db, file_id, "processing")
+        db.close()
+        
+        # Get the document content from blob storage
+        try:
+            # Use the getter function to access blob service client
+            blob_service_client = get_blob_service_client()
+                
+            container_client = blob_service_client.get_container_client(container_name)
+            blob_client = container_client.get_blob_client(blob_path)
+            
+            document_bytes = blob_client.download_blob().readall()
+        except Exception as e:
+            logger.error(f"Error downloading blob: {str(e)}")
+            db = get_db_session()
+            crud.update_file_status(db, file_id, "error", f"Error downloading blob: {str(e)}")
+            db.close()
+            return
+        
+        # Process the document with Azure Document Intelligence directly
+        document_client = get_or_create_document_intelligence_client()
+        
+        # Process document
+        poller = document_client.begin_analyze_document("prebuilt-layout", body=document_bytes)
+        result = poller.result()
+        
+        # Extract structured content from result
+        structured_content = extract_document_content(result)
+        
+        # Chunk the document
+        chunking_service = ChunkingService()
+        document_id = f"file_{file_id}"
+        document_title = file.name
+        chunks = chunking_service.chunk_document(structured_content, document_id, document_title)
+        
+        # Use global OpenAI client
+        openai = get_openai_client()
+        
+        # Process one chunk at a time (required for Azure OpenAI)
+        chunks_with_vectors = []
+        processed_count = 0
+        
+        for chunk_index, chunk in enumerate(chunks):
+            try:
+                # Add delay between requests to avoid rate limiting
+                if processed_count > 0:
+                    time.sleep(2)  # 2 second delay between chunks
+                
+                logger.info(f"Processing chunk {chunk_index+1}/{len(chunks)} with ID {chunk.get('id', 'unknown')}")
+                
+                # Truncate text if it's too long
+                text = chunk["text"]
+                max_text_length = 8000
+                if len(text) > max_text_length:
+                    logger.warning(f"Text too long ({len(text)} chars), truncating to {max_text_length}")
+                    text = text[:max_text_length]
+                
+                # Generate embedding
+                response = openai.embeddings.create(
+                    input=text,
+                    model=deployment
+                )
+                
+                # Add embedding to the chunk
+                chunk["vector"] = response.data[0].embedding
+                chunks_with_vectors.append(chunk)
+                processed_count += 1
+                
+                logger.info(f"Successfully processed chunk {processed_count}/{len(chunks)}")
+                
+            except Exception as e:
+                logger.error(f"Error generating embedding for chunk {chunk_index+1}/{len(chunks)}: {str(e)}")
+        
+        logger.info(f"Successfully generated embeddings for {len(chunks_with_vectors)} of {len(chunks)} chunks")
+        
+        # Get search client for the index
+        search_client = get_search_client()
+        
+        # Prepare search documents - ONLY include chunks that got embeddings
+        search_documents = []
+        
+        for chunk in chunks_with_vectors:
+            # Include the parent document ID in the chunk ID to ensure uniqueness
+            chunk_id = chunk["id"]
+            
+            # Create the search document
+            search_document = {
+                "chunk_id": chunk_id,  # Primary key field
+                "text_parent_id": chunk["parent_id"],
+                "chunk": chunk["text"],
+                "title": chunk["document_title"],
+                "header_1": chunk.get("document_title", ""),  # Use document title as header_1
+                "header_2": f"Page {chunk['page']}",     # Use page number as header_2
+                "header_3": chunk["type"].capitalize(),   # Use type as header_3
+                "content_vector": chunk["vector"],
+                "user_id": user_id  # Include user_id for multi-tenancy
+            }
+            search_documents.append(search_document)
+        
+        # Split into batches if there are many documents
+        batch_size = 1000  # Azure Search can handle up to 1000 documents in a single request
+        
+        indexed_count = 0
+        failed_count = 0
+        
+        for i in range(0, len(search_documents), batch_size):
+            batch = search_documents[i:i + batch_size]
+            logger.info(f"Uploading batch of {len(batch)} documents to search index")
+            
+            # Upload documents to search index
+            upload_result = search_client.upload_documents(documents=batch)
+            
+            # Log the results
+            success_count = len([r for r in upload_result if r.succeeded])
+            batch_failed_count = len([r for r in upload_result if not r.succeeded])
+            
+            indexed_count += success_count
+            failed_count += batch_failed_count
+            
+            logger.info(f"Batch upload results: {success_count} succeeded, {batch_failed_count} failed")
+            
+            # If any failed, log detailed errors
+            if batch_failed_count > 0:
+                for i, result in enumerate(upload_result):
+                    if not result.succeeded:
+                        logger.error(f"Error indexing document {i}: {result.status_code} - {result.message}")
+        
+        # Create result summary
+        index_result = {
+            "total_count": len(search_documents),
+            "indexed_count": indexed_count,
+            "failed_count": failed_count
+        }
+        
+        # Update file status
+        db = get_db_session()
+        crud.update_file_status(db, file_id, "complete")
+        
+        # Update usage statistics
+        pages_processed = len(set(chunk["page"] for chunk in chunks))
+        crud.update_pages_processed(db, user_id, pages_processed)
+        
+        db.close()
+        
+        logger.info(f"Successfully processed document: file_id={file_id}, chunks={len(chunks)}, indexed={indexed_count}")
+    except Exception as e:
+        logger.error(f"Error processing document from queue: {str(e)}")
+        try:
+            db = get_db_session()
+            crud.update_file_status(db, file_id, "error", str(e))
+            db.close()
+        except Exception as db_error:
+            logger.error(f"Error updating file status: {str(db_error)}")
+            if 'db' in locals():
+                db.close()
+
+# Update OCR Processing Queue Function
 @app.function_name("ProcessOCRQueue")
 @app.queue_trigger(arg_name="msg", queue_name="ocr-processing-queue", connection="AzureWebJobsStorage")
 def process_ocr_queue(msg: func.QueueMessage) -> None:
@@ -796,129 +1552,19 @@ def process_ocr_queue(msg: func.QueueMessage) -> None:
         message_data = json.loads(message_text)
         file_id = message_data.get('file_id')
         user_id = message_data.get('user_id')
+        blob_path = message_data.get('blob_path')
         
-        if not file_id or not user_id:
-            logger.error(f"Invalid queue message: missing file_id or user_id: {message_text}")
+        if not file_id or not user_id or not blob_path:
+            logger.error(f"Invalid queue message: missing required fields: {message_text}")
             return
         
-        # Get file from database
-        db = get_db_session()
-        try:
-            file = crud.get_file(db, file_id)
-            
-            if not file:
-                logger.error(f"File not found: {file_id}")
-                return
-        
-            # Update file status to processing
-            file = crud.update_file(db, file_id, {
-                'status': 'processing',
-                'attempts': file.attempts + 1,
-                'last_attempt_at': datetime.datetime.utcnow()
-            })
-            
-            # Get blob URL with SAS token
-            from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
-            from datetime import datetime, timedelta
-            
-            # Get connection string from environment variable
-            connection_string = os.environ.get('AzureWebJobsStorage')
-            
-            # Check if we're in mock mode for testing
-            if connection_string == "mock":
-                # Mock processing for testing
-                logger.info(f"Mock: Processing OCR for file {file_id}")
-                
-                # Create mock result
-                ocr_result = {
-                    "text": f"Mock OCR content for file {file_id}",
-                    "tables": [{"row_count": 2, "column_count": 2, "cells": []}],
-                    "pages": [{"page_number": 1, "width": 8.5, "height": 11.0}],
-                    "page_count": 1,
-                    "images": []
-                }
-                
-                # Update file with mock results
-                file = crud.update_file(db, file_id, {
-                    'status': 'complete',
-                    'processed_at': datetime.utcnow(),
-                    'file_metadata': {
-                        'ocr_result': ocr_result,
-                        'page_count': 1,
-                        'chunks': ['Mock OCR content for file ' + str(file_id)]
-                    }
-                })
-                
-                # Update usage stats
-                crud.update_usage_stats(db, user_id, datetime.utcnow().date(), 1, 0, 0)
-                
-                logger.info(f"Mock: OCR processing completed for file {file_id}")
-                return
-            
-            # Get blob service client
-            blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-            
-            # Get container and blob name from file.blob_path
-            blob_path = file.blob_path
-            container_name, blob_name = blob_path.split('/', 1)
-            
-            # Get blob client
-            blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
-            
-            # Generate SAS token for blob
-            sas_token = generate_blob_sas(
-                account_name=blob_client.account_name,
-                container_name=container_name,
-                blob_name=blob_name,
-                account_key=blob_service_client.credential.account_key,
-                permission=BlobSasPermissions(read=True),
-                expiry=datetime.utcnow() + timedelta(hours=1)
-            )
-            
-            # Create blob URL with SAS token
-            blob_url = f"{blob_client.url}?{sas_token}"
-            
-            # Process document with Azure Document Intelligence
-            analyze_result = process_document(blob_url)
-            
-            # Extract content from analyze result
-            ocr_result = extract_document_content(analyze_result)
-            
-            # Chunk text for vector database
-            text_chunks = chunk_text(ocr_result['text'])
-            
-            # Update file with OCR results
-            file = crud.update_file(db, file_id, {
-                'status': 'complete',
-                'processed_at': datetime.utcnow(),
-                'file_metadata': {
-                    'ocr_result': ocr_result,
-                    'page_count': ocr_result['page_count'],
-                    'chunks': text_chunks
-                }
-            })
-            
-            # Update usage stats
-            crud.update_usage_stats(db, user_id, datetime.utcnow().date(), ocr_result['page_count'], 0, 0)
-            
-            logger.info(f"OCR processing completed for file {file_id}")
-        except Exception as e:
-            logger.error(f"Error processing OCR for file {file_id}: {str(e)}")
-            
-            # Update file status to error
-            if 'file' in locals() and file:
-                crud.update_file(db, file_id, {
-                    'status': 'error',
-                    'error_message': str(e)
-                })
-        finally:
-            if 'db' in locals():
-                db.close()
+        # Process the document using our new implementation
+        process_document_from_queue(file_id, user_id, blob_path)
     except Exception as e:
         logger.error(f"Error processing OCR queue message: {str(e)}")
 
 # Document Indexing Functions
-@app.route(route="index", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+@app.route(route="api/index", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
 def index_document(req: func.HttpRequest) -> func.HttpResponse:
     """Index document content in Azure AI Search."""
     try:
@@ -934,31 +1580,22 @@ def index_document(req: func.HttpRequest) -> func.HttpResponse:
             return create_error_response(400, "Document content is required")
         
         # Get user ID from headers for multi-tenancy
-        user_id = get_user_id(req)
-        if not user_id:
-            return create_error_response(400, "User ID is required in x-user-id header")
+        user_id, error_response = validate_user_request(req)
+        if error_response:
+            return error_response
         
         # Connect to Azure Search Service
         from azure.search.documents import SearchClient
         from azure.core.credentials import AzureKeyCredential
         
         # Get Azure Search credentials from environment
-        endpoint = os.environ.get('AZURE_AISEARCH_ENDPOINT', 'https://testpl.search.windows.net/')
+        endpoint = os.environ.get('AZURE_AISEARCH_ENDPOINT')
         search_api_key = os.environ.get('AZURE_AISEARCH_KEY')
-        search_index_name = os.environ.get('AZURE_AISEARCH_INDEX', 'test-upload')
+        search_index_name = os.environ.get('AZURE_AISEARCH_INDEX')
         
-        if not search_api_key or search_api_key == 'default-key-for-development':
-            logger.warning("Using mock search service because API key not configured. Would index document with ID: " + req_body['id'])
-            # Return success for testing without actual search service
-            return func.HttpResponse(
-                body=json.dumps({
-                    "success": True, 
-                    "message": "Document indexed successfully (MOCK MODE)", 
-                    "note": "Azure Search API key not configured - document not actually indexed"
-                }),
-                status_code=200,
-                mimetype="application/json"
-            )
+        if not endpoint or not search_api_key or not search_index_name:
+            logger.error("Azure AI Search not properly configured")
+            return create_error_response(500, "Search service not properly configured")
         
         # Create the search client
         admin_client = SearchClient(
@@ -1007,11 +1644,7 @@ def index_document(req: func.HttpRequest) -> func.HttpResponse:
                 logger.error(f"Error indexing document: {result[0].error_message}")
                 return create_error_response(500, f"Error indexing document: {result[0].error_message}")
             
-            return func.HttpResponse(
-                body=json.dumps({"success": True, "message": "Document indexed successfully"}),
-                status_code=200,
-                mimetype="application/json"
-            )
+            return create_success_response({"success": True, "message": "Document indexed successfully"})
         except Exception as e:
             logger.error(f"Error during document indexing: {str(e)}")
             return create_error_response(500, f"Error during document indexing: {str(e)}")
@@ -1020,15 +1653,15 @@ def index_document(req: func.HttpRequest) -> func.HttpResponse:
         return create_error_response(500, f"Failed to index document: {str(e)}")
 
 # Document Processing Status Function
-@app.route(route="processing-status/{file_id}", auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="api/processing-status/{file_id}", auth_level=func.AuthLevel.ANONYMOUS)
 def processing_status(req: func.HttpRequest) -> func.HttpResponse:
     """Get the processing status of a file."""
     try:
-        user_id = get_user_id(req)
+        user_id, error_response = validate_user_request(req)
+        if error_response:
+            return error_response
+            
         file_id_str = req.route_params.get('file_id')
-        
-        if not user_id:
-            return create_error_response(400, "User ID is required in x-user-id header")
         if not file_id_str:
             return create_error_response(400, "File ID is required in route parameters")
             
@@ -1063,24 +1696,20 @@ def processing_status(req: func.HttpRequest) -> func.HttpResponse:
                 "attempts": file.attempts
             }
             
-            return func.HttpResponse(
-                body=json.dumps({"processing": processing_data}),
-                status_code=200,
-                mimetype="application/json"
-            )
+            return create_success_response({"processing": processing_data})
         finally:
             db.close()
     except Exception as e:
         logger.error(f"Error retrieving processing status: {str(e)}")
         return create_error_response(500, f"Failed to retrieve processing status: {str(e)}")
 
-# Helper functions for Azure Document Intelligence
-def get_document_intelligence_client():
+# Helper functions for Azure Document Intelligence - this fixes the recursive call issue
+def get_or_create_document_intelligence_client():
     """Create Azure Document Intelligence client."""
     try:
         # Get API key and endpoint from environment variables
-        endpoint = os.environ.get("DOCUMENT_INTELLIGENCE_ENDPOINT")
-        api_key = os.environ.get("DOCUMENT_INTELLIGENCE_API_KEY")
+        endpoint = os.environ.get("DOCUMENT_INTELLIGENCE_ENDPOINT") or os.environ.get("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT")
+        api_key = os.environ.get("DOCUMENT_INTELLIGENCE_API_KEY") or os.environ.get("AZURE_DOCUMENT_INTELLIGENCE_KEY")
         
         if not endpoint or not api_key:
             logger.error("Missing Document Intelligence configuration")
@@ -1094,141 +1723,118 @@ def get_document_intelligence_client():
         logger.error(f"Error creating Document Intelligence client: {str(e)}")
         raise
 
-def process_document(blob_url: str, model: str = "prebuilt-layout"):
-    """
-    Process a document using Azure Document Intelligence.
+def extract_document_content(result):
+    """Extract content from document result with structure information"""
+    structured_content = {
+        "paragraphs": [],
+        "tables": [],
+        "figures": [],
+        "handwriting": []
+    }
     
-    Args:
-        blob_url: The SAS URL to the document in Azure Blob Storage
-        model: The model to use (prebuilt-layout, prebuilt-document, etc.)
+    # Extract paragraphs
+    for paragraph in result.paragraphs:
+        structured_content["paragraphs"].append({
+            "text": paragraph.content,
+            "page": paragraph.bounding_regions[0].page_number if paragraph.bounding_regions else 1,
+            "confidence": paragraph.confidence if hasattr(paragraph, 'confidence') else 1.0
+        })
         
-    Returns:
-        AnalyzeResult: The result of the document analysis
-    """
-    try:
-        client = get_document_intelligence_client()
+    # Extract tables
+    for table in result.tables:
+        table_content = []
+        for row_idx in range(table.row_count):
+            row_content = []
+            for col_idx in range(table.column_count):
+                cell_content = ""
+                for cell in table.cells:
+                    if cell.row_index == row_idx and cell.column_index == col_idx:
+                        cell_content = cell.content
+                        break
+                row_content.append(cell_content)
+            table_content.append(row_content)
         
-        # Check if we're in mock mode for testing
-        if os.environ.get('AzureWebJobsStorage') == "mock":
-            logger.info(f"Mock: Processing document at {blob_url}")
-            # Return mock data for testing
-            return {
-                "content": "This is mock OCR content for testing.",
-                "tables": [{"rowCount": 2, "columnCount": 2, "cells": []}],
-                "pages": [{"pageNumber": 1, "width": 8.5, "height": 11.0}]
-            }
-            
-        # Start the document analysis process using the new method
-        # Use AnalyzeDocumentRequest with url_source parameter
-        from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
-        
-        # Create the request with url_source parameter
-        request = AnalyzeDocumentRequest(url_source=blob_url)
-        
-        # Call begin_analyze_document with the request
-        poller = client.begin_analyze_document(model, body=request)
-        result = poller.result()
-        
-        return result
-    except ResourceNotFoundError as e:
-        logger.error(f"Document not found: {str(e)}")
-        raise
-    except ServiceRequestError as e:
-        logger.error(f"Service request error: {str(e)}")
-        raise
-    except Exception as e:
-        logger.error(f"Error processing document: {str(e)}")
-        raise
-
-def extract_document_content(analyze_result):
-    """
-    Extract content from Document Intelligence analyze result.
+        structured_content["tables"].append({
+            "content": table_content,
+            "page": table.bounding_regions[0].page_number if table.bounding_regions else 1,
+            "row_count": table.row_count,
+            "column_count": table.column_count
+        })
     
-    Args:
-        analyze_result: The result from Azure Document Intelligence
-        
-    Returns:
-        dict: Extracted content including text, tables, and images
-    """
+    # Extract figures/images with captions
+    for page in result.pages:
+        for figure_idx, figure in enumerate(getattr(page, 'figures', [])):
+            caption = f"Figure {figure_idx+1}"
+            # If OCR was performed on the figure, include that text
+            figure_text = ""
+            if hasattr(figure, 'content'):
+                figure_text = figure.content
+            
+            structured_content["figures"].append({
+                "text": figure_text,
+                "caption": caption,
+                "page": page.page_number
+            })
+    
+    # Extract handwriting - updated to handle API changes
     try:
-        # For mock data
-        if isinstance(analyze_result, dict) and "content" in analyze_result:
-            return {
-                "text": analyze_result["content"],
-                "tables": analyze_result.get("tables", []),
-                "pages": analyze_result.get("pages", []),
-                "page_count": len(analyze_result.get("pages", [])),
-                "images": []
-            }
-            
-        # Extract full text content
-        text = analyze_result.content
+        # Handle case for API version with styles
+        if hasattr(result, 'styles'):
+            for style in result.styles:
+                if style.is_handwritten and hasattr(style, 'spans'):
+                    for span in style.spans:
+                        if hasattr(span, 'offset') and hasattr(span, 'length'):
+                            # Try to extract handwritten text using a safer approach
+                            try:
+                                # Find the text from content using offset and length if available
+                                handwritten_text = ""
+                                current_page = 1
+                                
+                                for page in result.pages:
+                                    current_page = page.page_number
+                                    if hasattr(page, 'lines'):
+                                        for line in page.lines:
+                                            # Check if line is within the span range - API versions differ in how this is represented
+                                            # Some versions use span.offset in line, others check line attributes directly
+                                            is_in_span = False
+                                            
+                                            # Method 1: Check using offset - older API
+                                            if hasattr(line, 'span') and hasattr(line.span, 'offset'):
+                                                is_in_span = (span.offset <= line.span.offset < (span.offset + span.length))
+                                            # Method 2: Try to infer from content and position - newer API
+                                            elif hasattr(line, 'content'):
+                                                # Use line's content as handwritten text
+                                                is_in_span = True
+                                            
+                                            if is_in_span:
+                                                handwritten_text += line.content + " "
+                                
+                                if handwritten_text:
+                                    structured_content["handwriting"].append({
+                                        "text": handwritten_text.strip(),
+                                        "page": current_page
+                                    })
+                            except Exception as e:
+                                logger.warning(f"Error extracting handwritten text from span: {str(e)}")
         
-        # Extract tables
-        tables = []
-        for table in analyze_result.tables:
-            table_data = {
-                "row_count": table.row_count,
-                "column_count": table.column_count,
-                "cells": []
-            }
-            
-            # Process cells
-            for cell in table.cells:
-                cell_data = {
-                    "row_index": cell.row_index,
-                    "column_index": cell.column_index,
-                    "row_span": cell.row_span,
-                    "column_span": cell.column_span,
-                    "content": cell.content
-                }
-                table_data["cells"].append(cell_data)
-                
-            tables.append(table_data)
-            
-        # Extract page information
-        pages = []
-        for page in analyze_result.pages:
-            page_data = {
-                "page_number": page.page_number,
-                "width": page.width,
-                "height": page.height,
-                "unit": page.unit,
-                "lines": []
-            }
-            
-            # Extract lines if available
-            if hasattr(page, "lines"):
-                for line in page.lines:
-                    line_data = {
-                        "content": line.content,
-                        "bounding_box": line.polygon if hasattr(line, "polygon") else None
-                    }
-                    page_data["lines"].append(line_data)
-                    
-            pages.append(page_data)
-            
-        # Extract images (if available)
-        images = []
-        if hasattr(analyze_result, "images") and analyze_result.images:
-            for img in analyze_result.images:
-                image_data = {
-                    "page_number": getattr(img, "page_number", None),
-                    "bounding_box": getattr(img, "bounding_box", None),
-                    # Add any additional image metadata
-                }
-                images.append(image_data)
-        
-        return {
-            "text": text,
-            "tables": tables,
-            "pages": pages,
-            "page_count": len(pages),
-            "images": images
-        }
+        # Alternative method: If the API doesn't provide styles, look for handwritten content in pages directly
+        if len(structured_content["handwriting"]) == 0:
+            for page in result.pages:
+                if hasattr(page, 'lines'):
+                    # Since we can't reliably determine handwriting, include all content
+                    # In a real scenario, you might want to use a model or heuristics to identify handwriting
+                    page_text = " ".join([line.content for line in page.lines if hasattr(line, 'content')])
+                    if page_text.strip():
+                        structured_content["handwriting"].append({
+                            "text": page_text,
+                            "page": page.page_number
+                        })
+                        
     except Exception as e:
-        logger.error(f"Error extracting document content: {str(e)}")
-        raise
+        logger.warning(f"Error extracting handwriting: {str(e)}")
+        # Continue processing other content types rather than failing completely
+    
+    return structured_content
 
 def chunk_text(text, max_chunk_size=1000, overlap=100):
     """
@@ -1268,71 +1874,89 @@ def chunk_text(text, max_chunk_size=1000, overlap=100):
         
     return chunks
 
-# Timer-triggered retry function for failed OCR jobs
-@app.function_name("RetryFailedOCRJobs")
-@app.timer_trigger(schedule="0 */15 * * * *", arg_name="myTimer", run_on_startup=False)
-def retry_failed_ocr_jobs(myTimer: func.TimerRequest) -> None:
+def query_documents(query, user_id, include_vectors=False, top_k=5, search_filter=None):
     """
-    Periodically checks for failed OCR jobs and retries them.
-    Runs every 15 minutes and looks for files with 'error' status
-    and less than MAX_RETRY_ATTEMPTS attempts.
+    Search for documents using the vector search index.
+    
+    Args:
+        query: The search query
+        user_id: The user ID to filter results by
+        include_vectors: Whether to include vectors in the response
+        top_k: Number of results to return
+        search_filter: Additional filter to apply to the search
+        
+    Returns:
+        List[Dict]: A list of search results
     """
-    MAX_RETRY_ATTEMPTS = 3
-    MAX_AGE_HOURS = 24  # Don't retry files older than this
-    
-    if myTimer.past_due:
-        logger.info('Retry timer is past due')
-    
-    logger.info('Checking for failed OCR jobs to retry')
-    
     try:
-        # Get files with error status that haven't exceeded max attempts
-        db = get_db_session()
-        try:
-            # Calculate the cutoff time (don't retry files older than MAX_AGE_HOURS)
-            cutoff_time = datetime.datetime.utcnow() - datetime.timedelta(hours=MAX_AGE_HOURS)
+        # Get the search client
+        search_client = get_search_client()
+        
+        # Get the OpenAI client for generating embeddings
+        openai = get_openai_client()
+        
+        # Get the deployment name for the embedding model
+        deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+        if not deployment:
+            raise ValueError("Missing required environment variable: AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+        
+        # Generate embedding for the query
+        response = openai.embeddings.create(
+            input=query,
+            model=deployment
+        )
+        query_vector = response.data[0].embedding
+        
+        # Build the filter
+        filter_str = f"user_id eq '{user_id}'"
+        if search_filter:
+            filter_str = f"{filter_str} and {search_filter}"
             
-            # Get failed files from database
-            failed_files = crud.get_failed_files(db, max_attempts=MAX_RETRY_ATTEMPTS, cutoff_time=cutoff_time)
+        # Define the vector search parameters
+        vector_query = VectorizedQuery(
+            vector=query_vector,
+            fields=["content_vector"],
+            k=top_k
+        )
+        
+        # Execute the search
+        results = search_client.search(
+            search_text=query,
+            filter=filter_str,
+            top=top_k,
+            vector_queries=[vector_query],
+            select=["chunk_id", "text_parent_id", "chunk", "title", "header_1", "header_2", "header_3"],
+            include_total_count=True
+        )
+        
+        # Process the results
+        processed_results = []
+        for result in results:
+            item = {
+                "id": result["chunk_id"],
+                "parent_id": result["text_parent_id"],
+                "title": result["title"],
+                "header_1": result.get("header_1", ""),
+                "header_2": result.get("header_2", ""),
+                "header_3": result.get("header_3", ""),
+                "content": result["chunk"],
+                "score": result["@search.score"]
+            }
             
-            if not failed_files:
-                logger.info("No failed OCR jobs to retry")
-                return
+            # Only include vectors if requested
+            if include_vectors and hasattr(result, "@search.vector_score"):
+                item["vector_score"] = result["@search.vector_score"]
                 
-            logger.info(f"Found {len(failed_files)} failed OCR jobs to retry")
-            
-            # Get the queue client
-            queue_client = get_queue_client()
-            
-            # Retry each file
-            for file in failed_files:
-                logger.info(f"Queuing retry for file {file.id}: attempt {file.attempts + 1} of {MAX_RETRY_ATTEMPTS}")
-                
-                # Send message to OCR processing queue
-                message = {
-                    'file_id': file.id,
-                    'user_id': file.user_id,
-                    'retry': True,
-                    'attempt': file.attempts + 1
-                }
-                
-                # Update file status to indicate it's being retried
-                crud.update_file(db, file.id, {
-                    'status': 'queued',
-                    'error_message': f"Previous error: {file.error_message}. Retrying job."
-                })
-                
-                # Encode message as JSON and send to queue
-                message_json = json.dumps(message)
-                queue_client.send_message(message_json)
-                
-                logger.info(f"Requeued file {file.id} for OCR processing")
-            
-            logger.info(f"Retry job completed: queued {len(failed_files)} files for reprocessing")
-        except Exception as e:
-            logger.error(f"Error retrying failed OCR jobs: {str(e)}")
-        finally:
-            if 'db' in locals():
-                db.close()
+            processed_results.append(item)
+        
+        # Add metadata about the search
+        response = {
+            "results": processed_results,
+            "count": len(processed_results),
+            "total": results.get_count()
+        }
+        
+        return response
     except Exception as e:
-        logger.error(f"Error in retry timer function: {str(e)}")
+        logger.error(f"Error querying documents: {str(e)}")
+        raise

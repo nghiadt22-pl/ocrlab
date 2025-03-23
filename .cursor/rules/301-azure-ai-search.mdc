@@ -1,0 +1,62 @@
+---
+description: USE Azure Portal for updating Azure AI Search index schemas to ensure safety and maintain production stability
+globs: 
+alwaysApply: false
+---
+# Azure AI Search Index Schema Management
+
+<version>1.0.0</version>
+
+## Context
+- When working with Azure AI Search indexes in production environments
+- When making changes to search index schemas
+- When discussing or implementing schema updates for Azure AI Search
+
+## Requirements
+- Always use Azure Portal to update Azure AI Search index schemas rather than using scripts or API calls
+- For production environments, create a new index with the updated schema before dropping the old one
+- Use index aliases to minimize disruption when replacing an index with an updated version
+- Document all schema changes in version control with detailed explanations
+- Test schema changes in development or staging environments before applying to production
+- Only add new fields to existing indexes; never modify existing fields that require rebuilding the index
+- When adding vector search capabilities, always create a new index rather than updating an existing one
+
+## Examples
+
+<example>
+// Good approach - Using index aliases with new index creation
+// In application code, reference the alias instead of the index directly
+const searchClient = new SearchClient(
+  endpoint,
+  "products-alias", // Using the alias instead of direct index name
+  new AzureKeyCredential(apiKey)
+);
+
+// Documentation comment explaining that index schema changes 
+// should be made via Azure Portal, not programmatically
+</example>
+
+<example type="invalid">
+// Bad approach - Directly modifying schema via script
+async function updateIndexSchema() {
+  const client = new SearchIndexClient(endpoint, new AzureKeyCredential(apiKey));
+  const index = await client.getIndex("products");
+  
+  // Modifying the index schema programmatically
+  index.fields.push({
+    name: "newField",
+    type: "Edm.String",
+    searchable: true
+  });
+  
+  // Updating the index directly - AVOID THIS
+  await client.createOrUpdateIndex(index);
+}
+</example>
+
+## Explanation
+Modifying Azure AI Search index schemas directly through scripts can lead to data loss, service disruptions, and unexpected behaviors. The Azure Portal provides a controlled environment for making schema changes with clear feedback on which changes require rebuilds.
+
+For production systems, the safest approach is to create a new index with the updated schema, populate it with data, and then use an index alias to switch traffic over without application changes. This ensures continuous availability and provides a rollback option if issues arise.
+
+Some schema changes (like changing field types or removing fields) always require a full rebuild, which means the index will be unavailable during the process. Using Azure Portal makes these requirements clear and helps prevent accidental service disruptions. 

@@ -140,50 +140,98 @@ Deletes a folder.
 
 Uploads a file to Azure Blob Storage and creates a file record in the database.
 
-**Endpoint:** `POST /api/upload`
+**Endpoint:** `POST /api/files`
 
 **Headers:**
 - `x-user-id` (required): The ID of the user uploading the file
-- `x-folder-id` (required): The ID of the folder to upload the file to
-- `content-type`: The MIME type of the file
-- `content-disposition`: Contains the filename (e.g., `attachment; filename="example.pdf"`)
+- `Content-Type`: `application/json`
 
-**Body:**
-- Binary file content
+**Request Body:**
+```json
+{
+  "name": "example.pdf",
+  "folder_id": 3,
+  "mime_type": "application/pdf",
+  "size_bytes": 1048576,
+  "blob_path": "test-upload/example.pdf"
+}
+```
 
 **Response:**
 - `201 Created`: File uploaded successfully
   ```json
   {
-    "file": {
-      "id": 1,
-      "name": "example.pdf",
-      "folder_id": 3,
-      "blob_url": "https://storage.azure.com/container/20230307123456_abcd1234_example.pdf",
-      "status": "uploaded",
-      "size_bytes": 1048576,
-      "content_type": "application/pdf",
-      "created_at": "2023-03-07T12:34:56.789012+00:00",
-      "updated_at": "2023-03-07T12:34:56.789012+00:00"
-    }
+    "id": 1,
+    "name": "example.pdf",
+    "folder_id": 3,
+    "status": "queued",
+    "created_at": "2023-03-07T12:34:56.789012+00:00"
   }
   ```
 - `400 Bad Request`: Missing required parameters or invalid file
   ```json
   {
-    "error": "Folder ID is required in x-folder-id header"
+    "error": "Bad request: Missing required fields"
   }
   ```
 - `404 Not Found`: Folder not found
   ```json
   {
-    "error": "Folder not found or you don't have permission to access it"
+    "error": "Folder not found: {folder_id}"
   }
   ```
 - `500 Internal Server Error`: Upload or database error
   ```json
   {
     "error": "Failed to upload file: [error message]"
+  }
+  ```
+
+### Process Document
+
+Processes a document using Azure Document Intelligence and then indexes it in Azure AI Search.
+
+**Endpoint:** `POST /api/process_document`
+
+**Headers:**
+- `x-user-id` (required): The ID of the user
+- `Content-Type`: `application/pdf` (or other supported document type)
+
+**Query Parameters:**
+- `title` (optional): Title for the document
+- `id` (optional): Custom ID for the document
+- `file_id` (optional): ID of the file in the database
+
+**Body:**
+- Binary file content (the actual document to process)
+
+**Implementation Notes:**
+- The implementation directly uses Azure Document Intelligence to process the document
+- The document is chunked and vector embeddings are generated for each chunk
+- Chunks are indexed in Azure AI Search with proper metadata
+- Results include only chunks that successfully received vector embeddings
+
+**Response:**
+- `200 OK`: Document processing completed
+  ```json
+  {
+    "document_id": "doc_Financial_Report",
+    "title": "Financial Report",
+    "chunks_count": 10,
+    "indexed_count": 10,
+    "failed_count": 0
+  }
+  ```
+- `400 Bad Request`: Missing required parameters
+  ```json
+  {
+    "error": "Document content is required"
+  }
+  ```
+- `500 Internal Server Error`: Processing error
+  ```json
+  {
+    "error": "Error processing document: [error message]"
   }
   ```
 
@@ -280,7 +328,7 @@ Deletes a file.
 
 ### Query Documents
 
-Search for documents using natural language queries.
+Search for documents using text search capabilities, matching against document content.
 
 **Endpoint:** `POST /api/query`
 
@@ -292,17 +340,18 @@ Search for documents using natural language queries.
 ```json
 {
   "query": "financial statements for 2024",
-  "folder_id": 1,
-  "limit": 10,
-  "offset": 0
+  "top": 10
 }
 ```
 
 **Parameters:**
 - `query` (required): The search query text
-- `folder_id` (optional): Filter results to a specific folder
-- `limit` (optional): Maximum number of results to return (default: 10)
-- `offset` (optional): Number of results to skip for pagination (default: 0)
+- `top` (optional): Maximum number of results to return (default: 5)
+
+**Implementation Notes:**
+- The implementation uses Azure AI Search with standard text search capabilities
+- User ID is used to filter results for multi-tenancy security
+- Usage statistics are updated to count queries made
 
 **Response:**
 - `200 OK`: Search results
@@ -310,44 +359,32 @@ Search for documents using natural language queries.
   {
     "results": [
       {
-        "id": "doc-123",
+        "id": "chunk-123",
         "text": "Financial statements for the fiscal year 2024 show a significant increase in revenue...",
         "score": 0.89,
-        "filename": "Q4_financials_2024.pdf",
-        "page": 1,
-        "folder_id": 1,
-        "created_at": "2024-01-15T10:30:00Z"
+        "filename": "Q4 Financial Report 2024",
+        "title": "Q4 Financial Report 2024",
+        "page": "5",
+        "type": "Table"
       },
       {
-        "id": "doc-456",
+        "id": "chunk-456",
         "text": "The balance sheet from 2024 indicates strong liquidity positions across all departments...",
         "score": 0.72,
-        "filename": "annual_report_2024.pdf",
-        "page": 5,
-        "folder_id": 1,
-        "created_at": "2024-01-20T14:45:00Z"
+        "filename": "Annual Report 2024",
+        "title": "Annual Report 2024", 
+        "page": "12",
+        "type": "Paragraph"
       }
     ]
   }
   ```
-- `400 Bad Request`: Missing required parameters
-  ```json
-  {
-    "error": "Query parameter is required"
-  }
-  ```
-- `500 Internal Server Error`: Search error
-  ```json
-  {
-    "error": "Failed to execute search: [error message]"
-  }
-  ```
 
-### Index Document
+### Vector Search Documents
 
-Manually index a document in the vector database.
+Search for documents using vector search for semantic similarity. This endpoint leverages embeddings for more relevant results based on meaning rather than exact keyword matches.
 
-**Endpoint:** `POST /api/index`
+**Endpoint:** `POST /api/vector_search`
 
 **Headers:**
 - `x-user-id` (required): The ID of the user
@@ -356,38 +393,43 @@ Manually index a document in the vector database.
 **Request Body:**
 ```json
 {
-  "file_id": "file-123"
+  "query": "financial statements for 2024",
+  "top_k": 10
 }
 ```
 
 **Parameters:**
-- `file_id` (required): The ID of the file to index
+- `query` (required): The search query text
+- `top_k` (optional): Maximum number of results to return (default: 5)
+
+**Implementation Notes:**
+- The implementation uses Azure AI Search with vector search capabilities
+- Text from the query is converted to vector embeddings via Azure OpenAI
+- User ID is used to filter results for multi-tenancy security
+- Usage statistics are updated to count queries made
 
 **Response:**
-- `200 OK`: Indexing started successfully
+- `200 OK`: Search results
   ```json
   {
-    "message": "Document indexing started",
-    "file_id": "file-123",
-    "status": "processing"
-  }
-  ```
-- `400 Bad Request`: Missing required parameters
-  ```json
-  {
-    "error": "File ID is required"
-  }
-  ```
-- `404 Not Found`: File not found
-  ```json
-  {
-    "error": "File not found or you don't have permission to access it"
-  }
-  ```
-- `500 Internal Server Error`: Indexing error
-  ```json
-  {
-    "error": "Failed to index document: [error message]"
+    "results": [
+      {
+        "text": "Financial statements for the fiscal year 2024 show a significant increase in revenue...",
+        "page": 5,
+        "type": "table",
+        "score": 0.89,
+        "document_title": "Q4 Financial Report 2024",
+        "parent_id": "doc-123"
+      },
+      {
+        "text": "The balance sheet from 2024 indicates strong liquidity positions across all departments...",
+        "page": 12,
+        "type": "paragraph",
+        "score": 0.72,
+        "document_title": "Annual Report 2024",
+        "parent_id": "doc-456"
+      }
+    ]
   }
   ```
 
@@ -409,18 +451,18 @@ Check the status of document processing.
 - `200 OK`: Processing status
   ```json
   {
-    "file_id": "file-123",
-    "user_id": "user-456",
-    "status": "completed",
-    "processing_time": 3.5,
-    "extracted_content": {
-      "paragraphs": 15,
-      "tables": 2,
-      "images": 3,
-      "handwritten_items": 1
-    },
-    "summary": "This document contains financial projections for Q1 2024, including revenue forecasts and expense breakdowns...",
-    "keywords": ["financial", "projections", "revenue", "2024", "expenses"]
+    "processing": {
+      "file_id": 123,
+      "name": "document.pdf",
+      "status": "completed",
+      "progress": 100,
+      "error": null,
+      "started_at": "2023-03-07T12:34:56.789012+00:00",
+      "completed_at": "2023-03-07T12:40:12.345678+00:00",
+      "pages_processed": 10,
+      "total_pages": 10,
+      "attempts": 1
+    }
   }
   ```
 - `400 Bad Request`: Missing required parameters

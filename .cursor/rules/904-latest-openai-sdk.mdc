@@ -1,0 +1,112 @@
+---
+description: ALWAYS use latest SDK and API versions for Azure OpenAI integration
+globs: 
+alwaysApply: false
+---
+# Azure OpenAI SDK and API Versions
+
+<version>1.0.0</version>
+
+## Context
+- When integrating with Azure OpenAI services
+- When creating or updating code that uses Azure OpenAI APIs
+- When upgrading existing OpenAI integration code
+
+## Requirements
+
+### Python SDK
+- Use the official OpenAI Python SDK (minimum v1.0.0, latest is 1.65.1+)
+- Import the `AzureOpenAI` client from the openai package
+- Specify API version explicitly, use latest GA (`2024-10-21`) or latest preview (`2025-01-01-preview`) for new features
+- Set proper environment variables or provide explicit authentication params
+
+### JavaScript/TypeScript SDK
+- Use the official OpenAI Node.js SDK (minimum v4.0.0)
+- Import the `AzureOpenAI` client from the openai package
+- Configure with proper Azure endpoint and API key or token
+
+### .NET SDK
+- Use Azure.AI.OpenAI package (minimum v2.0.0, latest is 2.1.0+)
+- Use `AzureOpenAIClient` class for Azure OpenAI integration
+- Leverage `ChatClient` for modern chat completions API
+
+## Examples
+
+<example>
+# Python - Latest SDK with Azure integration
+from openai import AzureOpenAI
+
+client = AzureOpenAI(
+    api_version="2024-10-21",  # Latest GA version
+    azure_endpoint="https://your-resource.openai.azure.com",
+    api_key="your-api-key"  # Better from environment variables
+)
+
+response = client.chat.completions.create(
+    model="deployment-name",  # Your Azure deployment name
+    messages=[{"role": "user", "content": "Hello, how can you help me?"}]
+)
+</example>
+
+<example>
+// JavaScript - Latest SDK with Azure integration
+import { AzureOpenAI } from "openai";
+
+const client = new AzureOpenAI({
+  apiVersion: "2024-10-21",
+  azure: {
+    apiKey: process.env.AZURE_OPENAI_API_KEY,
+    endpoint: process.env.AZURE_OPENAI_ENDPOINT
+  }
+});
+
+const completion = await client.chat.completions.create({
+  model: "deployment-name", // Your Azure deployment name
+  messages: [{ role: "user", content: "Hello, how can you help me?" }]
+});
+</example>
+
+<example>
+// C# - Latest SDK with Azure integration
+using Azure.AI.OpenAI;
+using Azure.Identity;
+
+AzureOpenAIClient client = new(
+    new Uri("https://your-resource.openai.azure.com"),
+    new DefaultAzureCredential());
+
+ChatClient chatClient = client.GetChatClient("deployment-name");
+
+ChatCompletion completion = chatClient.CompleteChat(
+    [
+        new SystemChatMessage("You are a helpful assistant."),
+        new UserChatMessage("Hello, how can you help me?")
+    ]);
+</example>
+
+<example type="invalid">
+# Python - Outdated SDK approach (pre-1.0)
+import openai
+
+openai.api_type = "azure"
+openai.api_base = "https://your-resource.openai.azure.com"
+openai.api_version = "2023-05-15"  # Outdated API version
+openai.api_key = "your-api-key"
+
+response = openai.Completion.create(
+    engine="deployment-name",
+    prompt="Hello, how can you help me?",
+    max_tokens=100
+)
+</example>
+
+<example type="invalid">
+// C# - Outdated SDK approach (pre-2.0)
+OpenAIClient client = new(
+    new Uri("https://your-resource.openai.azure.com"),
+    new AzureKeyCredential("your-api-key"));
+
+Response<Completions> completionsResponse = await client.GetCompletionsAsync(
+    "deployment-name",
+    "Hello, how can you help me?");
+</example> 

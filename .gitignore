@@ -33,6 +33,10 @@ function_app/.env.production
 function_app/integration_tests/.env
 
 function_app/local.settings.json
+function_app/local.settings.json.bk
+
+.ai/arch.md
+.ai/backend_structure.md
 
 # Private individual user cursor rules
 .cursor/rules/_*.mdc

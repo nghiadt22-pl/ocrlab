@@ -1,0 +1,64 @@
+---
+description: ALWAYS place backend tests in function_app/tests to ensure proper configuration and imports
+globs: 
+alwaysApply: false
+---
+# Backend Testing Rule
+
+## Context
+- When creating test scripts for Azure Functions backend
+- When testing OCR processing or search functionality
+- When adding new backend features requiring tests
+
+## Requirements
+- Place all backend tests in `function_app/tests` directory
+- Use existing `.env` in `function_app/` for configuration
+- Access backend code via relative imports from function_app
+- Isolate test data using test-specific user IDs
+- Use pytest for structured test cases
+
+## Examples
+
+<example>
+# function_app/tests/test_document.py
+import os
+import sys
+from dotenv import load_dotenv
+
+# Add function_app to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Load env from function_app/.env
+env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+load_dotenv(env_path)
+
+from services.document import DocumentService
+
+def test_document_analysis():
+    # Properly structured test
+    pass
+</example>
+
+<example type="invalid">
+# scripts/test_document.py
+import os
+import requests
+
+# ❌ Not using function_app directory structure
+# ❌ Not loading environment from function_app/.env
+# ❌ Hard-coding configuration values
+
+def test_document():
+    response = requests.post(
+        "https://example.com/api/process_document",
+        headers={"x-user-id": "12345"},
+        data=open("sample.pdf", "rb")
+    )
+</example>
+
+## Rationale
+- Ensures proper access to backend code and environment
+- Maintains separation between frontend/backend testing
+- Enables consistent test configuration
+- Facilitates test packaging with backend code for CI/CD
+- Prevents production data contamination 

@@ -1,0 +1,122 @@
+---
+description: ALWAYS use Azure SDK directly for Document Intelligence, AI Search, and OpenAI services to ensure optimal performance and reliability
+globs: 
+alwaysApply: false
+---
+# Azure SDK Direct Usage
+
+<version>1.0.0</version>
+
+## Context
+- When integrating with Azure cognitive services in backend code
+- Applies to Document Intelligence, AI Search, and OpenAI services
+
+## Requirements
+- ALWAYS use the official Azure SDK packages directly for these services
+- NEVER create or use wrapper classes that abstract Azure SDK functionality
+- ALWAYS handle credentials and configuration explicitly in your code
+- ALWAYS handle Azure SDK exceptions directly
+- ALWAYS upgrade to the latest stable SDK versions when possible
+
+## Azure Document Intelligence
+<example>
+// Correct: Direct SDK usage
+from azure.ai.documentintelligence import DocumentIntelligenceClient
+from azure.core.credentials import AzureKeyCredential
+
+# Direct client initialization
+document_client = DocumentIntelligenceClient(
+    endpoint=endpoint,
+    credential=AzureKeyCredential(api_key)
+)
+
+# Direct API call
+poller = document_client.begin_analyze_document("prebuilt-layout", body=document_bytes)
+result = poller.result()
+</example>
+
+<example type="invalid">
+// Incorrect: Using a wrapper class
+class DocumentProcessor:
+    def __init__(self, endpoint, api_key):
+        self.client = DocumentIntelligenceClient(endpoint, AzureKeyCredential(api_key))
+    
+    def process_document(self, document):
+        poller = self.client.begin_analyze_document("prebuilt-layout", body=document)
+        return poller.result()
+
+# Using the wrapper
+processor = DocumentProcessor(endpoint, api_key)
+result = processor.process_document(document_bytes)
+</example>
+
+## Azure AI Search
+<example>
+// Correct: Direct SDK usage
+from azure.search.documents import SearchClient
+from azure.core.credentials import AzureKeyCredential
+
+# Direct client initialization
+search_client = SearchClient(
+    endpoint=endpoint, 
+    index_name=index_name,
+    credential=AzureKeyCredential(api_key)
+)
+
+# Direct API call
+results = search_client.search(
+    search_text=query,
+    select=fields,
+    filter=filter_expression
+)
+</example>
+
+<example type="invalid">
+// Incorrect: Using a wrapper class or utility function
+def search_documents(query, fields, filters):
+    client = get_search_client()  # Indirect client creation
+    return client.search(query, select=fields, filter=filters)
+
+# Using the wrapper
+results = search_documents("my query", ["title", "content"], "user_id eq '123'")
+</example>
+
+## Azure OpenAI
+<example>
+// Correct: Direct SDK usage
+from openai import AzureOpenAI
+
+# Direct client initialization
+client = AzureOpenAI(
+    api_key=api_key,
+    api_version=api_version,
+    azure_endpoint=api_endpoint
+)
+
+# Direct API call
+response = client.embeddings.create(
+    input=text,
+    model=deployment_name
+)
+embedding = response.data[0].embedding
+</example>
+
+<example type="invalid">
+// Incorrect: Using a wrapper class
+class EmbeddingGenerator:
+    def __init__(self, config):
+        self.client = AzureOpenAI(
+            api_key=config.api_key,
+            api_version=config.api_version,
+            azure_endpoint=config.endpoint
+        )
+        self.model = config.model
+    
+    def get_embedding(self, text):
+        response = self.client.embeddings.create(input=text, model=self.model)
+        return response.data[0].embedding
+
+# Using the wrapper
+embedder = EmbeddingGenerator(config)
+embedding = embedder.get_embedding(text)
+</example> 

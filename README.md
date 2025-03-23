@@ -85,9 +85,9 @@ Contributions are welcome! Please see our [Contribution Guide](CONTRIBUTION_GUID
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
 ## Acknowledgments
 
 - Built with [Lovable](https://lovable.dev)
 - UI components from [shadcn/ui](https://ui.shadcn.com/)
 - PDF processing powered by [Azure AI Document Intelligence](https://azure.microsoft.com/en-us/services/cognitive-services/document-intelligence/)
+
