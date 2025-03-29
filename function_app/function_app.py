@@ -35,7 +35,7 @@ from azure.search.documents.models import VectorizedQuery, QueryType
 from openai import AzureOpenAI
 
 # Import the services
-from services.chunking import ChunkingService
+from services.chunking import ChunkingService, HybridChunkingStrategy
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -1533,6 +1533,113 @@ def process_document_from_queue(file_id, user_id, blob_path):
             logger.error(f"Error updating file status: {str(db_error)}")
             if 'db' in locals():
                 db.close()
+
+# Hybrid Chunking API Endpoint
+@app.function_name("HybridChunkDocument")
+@app.route(route="api/hybrid_chunk_document", auth_level=func.AuthLevel.ANONYMOUS, methods=["POST"])
+def hybrid_chunk_document(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Process a document using the hybrid figure/paragraph chunking strategy.
+    
+    Request Body:
+    {
+        "analyzeResult": {...},   // Raw Azure Document Intelligence result or file_id to retrieve it
+        "file_id": "123",         // Optional: If provided, will load the document result from file record
+        "document_id": "doc_123", // Optional: If not provided, will use file_id
+        "document_title": "Title" // Optional: If not provided, will use file name or a default
+    }
+    
+    Returns:
+    {
+        "chunks": [
+            {
+                "id": "doc_123_chunk_0",
+                "parent_id": "doc_123",
+                "document_title": "Title",
+                "text": "...",
+                "page": 1,
+                "type": "figure|paragraph",
+                ... additional metadata
+            },
+            ...
+        ]
+    }
+    """
+    try:
+        # Get user ID from request header for authorization
+        user_id, error_response = validate_user_request(req)
+        if error_response:
+            return error_response
+        
+        # Parse request body
+        try:
+            req_body = req.get_json()
+        except ValueError:
+            return create_error_response(400, "Invalid JSON in request body")
+        
+        # Get file ID if provided
+        file_id = req_body.get('file_id')
+        analyze_result = req_body.get('analyzeResult')
+        
+        # If file_id is provided but no analyzeResult, load the document result from the file record
+        if file_id and not analyze_result:
+            db = get_db_session()
+            try:
+                # Get file record
+                file = crud.get_file(db, int(file_id))
+                if not file:
+                    db.close()
+                    return create_error_response(404, f"File with ID {file_id} not found")
+                
+                # Check if user has access to this file
+                if str(file.user_id) != user_id:
+                    db.close()
+                    return create_error_response(403, "You don't have permission to access this file")
+                
+                # Get document result from file metadata if available
+                if not file.ocr_result:
+                    db.close()
+                    return create_error_response(400, "Document has not been processed with OCR yet")
+                
+                # Parse OCR result
+                analyze_result = json.loads(file.ocr_result)
+                
+                # Use file properties for document_id and document_title if not provided
+                document_id = req_body.get('document_id', f"file_{file_id}")
+                document_title = req_body.get('document_title', file.name)
+                
+                db.close()
+            except Exception as e:
+                if 'db' in locals():
+                    db.close()
+                return create_error_response(500, f"Error retrieving file data: {str(e)}")
+        
+        # Validate required parameters
+        if not analyze_result:
+            return create_error_response(400, "analyzeResult is required in request body or a valid file_id must be provided")
+            
+        # Set up document_id and document_title if not already set
+        document_id = req_body.get('document_id', f"doc_{uuid.uuid4()}")
+        document_title = req_body.get('document_title', "Untitled Document")
+        
+        # Create chunking service
+        hybrid_chunking = HybridChunkingStrategy()
+        
+        # Process document
+        chunks = hybrid_chunking.chunk_document(analyze_result, document_id, document_title)
+        
+        # Return response
+        return func.HttpResponse(
+            json.dumps({"chunks": chunks}),
+            mimetype="application/json",
+            status_code=200
+        )
+        
+    except Exception as e:
+        error_msg = f"Error in hybrid_chunk_document: {str(e)}"
+        logging.error(error_msg)
+        logging.error(traceback.format_exc())
+        return create_error_response(500, error_msg)
 
 # Update OCR Processing Queue Function
 @app.function_name("ProcessOCRQueue")
